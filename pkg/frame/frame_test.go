@@ -30,3 +30,25 @@ func Test_DecodeEncode(t *testing.T) {
 	}
 
 }
+
+func Test_DecodeEncodeV2(t *testing.T) {
+	f := NewHeaderV2(uint16(42))
+	payload := []byte("hello world")
+	f.Length = uint16(len(payload))
+
+	marshalled, err := EncodeV2(f)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f2, err := DecodeV2(marshalled)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if *f != *f2 {
+		t.Fatalf("expected decoded frame %v to match original frame %v", f2, f)
+	}
+
+}

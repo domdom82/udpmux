@@ -19,7 +19,7 @@ func main() {
 
 	fmt.Println("listening", addr.String())
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 2048)
 	for {
 		n, clientAddr, err := clientConn.ReadFromUDP(buffer)
 		if err != nil {

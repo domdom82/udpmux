@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 )
 
 func main() {
@@ -18,14 +19,19 @@ func main() {
 
 	defer conn.Close()
 
-	n, err := conn.Write([]byte("Hello are you there?"))
+	msg := "Hello are you there?"
+	if len(os.Args) > 1 {
+		msg = os.Args[1]
+	}
+
+	n, err := conn.Write([]byte(msg))
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Println("wrote(proxy)", n, "bytes")
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 2048)
 	n, err = conn.Read(buffer)
 	if err != nil {
 		panic(err)

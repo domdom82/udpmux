@@ -3,6 +3,7 @@ package frame
 import (
 	"encoding/binary"
 	"fmt"
+	"strconv"
 )
 
 // Protocol constants for the outer mux header.
@@ -36,7 +37,7 @@ type HeaderV2 struct {
 	EndpointId uint16 // Destination endpoint id
 }
 
-func NewHeader(endpoint string) (*HeaderV1, error) {
+func NewHeaderV1(endpoint string) (*HeaderV1, error) {
 	if len(endpoint) > 256 {
 		return nil, fmt.Errorf("endpoint too long")
 	}
@@ -66,7 +67,7 @@ func NewHeaderV2(endpointId uint16) *HeaderV2 {
 	return h
 }
 
-func Encode(h *HeaderV1) ([]byte, error) {
+func EncodeV1(h *HeaderV1) ([]byte, error) {
 	buf := make([]byte, HeaderV1Length)
 
 	_, err := binary.Encode(buf, binary.BigEndian, h)
@@ -76,12 +77,21 @@ func Encode(h *HeaderV1) ([]byte, error) {
 	return buf, nil
 }
 
-func Decode(buf []byte) (*HeaderV1, error) {
+func DecodeV1(buf []byte) (*HeaderV1, error) {
 	h := &HeaderV1{}
 	_, err := binary.Decode(buf, binary.BigEndian, h)
 	if err != nil {
 		return nil, err
 	}
+
+	if h.Magic != Magic {
+		return nil, fmt.Errorf("bad magic: %s (expected: %s)", strconv.Itoa(int(h.Magic)), strconv.Itoa(int(Magic)))
+	}
+
+	if h.Version != VersionV1 {
+		return nil, fmt.Errorf("bad version: %d (expected: %d)", h.Version, VersionV1)
+	}
+
 	return h, nil
 }
 
@@ -101,5 +111,14 @@ func DecodeV2(buf []byte) (*HeaderV2, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if h.Magic != Magic {
+		return nil, fmt.Errorf("bad magic: %s (expected: %s)", strconv.Itoa(int(h.Magic)), strconv.Itoa(int(Magic)))
+	}
+
+	if h.Version != VersionV2 {
+		return nil, fmt.Errorf("bad version: %d (expected: %d)", h.Version, VersionV2)
+	}
+
 	return h, nil
 }

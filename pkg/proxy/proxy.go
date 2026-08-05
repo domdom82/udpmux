@@ -27,6 +27,8 @@ type Proxy struct {
 	localAddr   string
 	backendAddr string
 	workers     int
+	writeHooks  []Hook
+	readHooks   []Hook
 }
 
 func NewProxy(localAddr string, backendAddr string, workers int) *Proxy {
@@ -37,6 +39,14 @@ func NewProxy(localAddr string, backendAddr string, workers int) *Proxy {
 	}
 
 	return p
+}
+
+func (p *Proxy) AddWriteHook(hook Hook) {
+	p.writeHooks = append(p.writeHooks, hook)
+}
+
+func (p *Proxy) AddReadHook(hook Hook) {
+	p.readHooks = append(p.readHooks, hook)
 }
 
 func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {

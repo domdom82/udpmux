@@ -24,23 +24,29 @@ type ClientSession struct {
 	mu           sync.Mutex
 	done         chan struct{}
 	log          logr.Logger
+	writeHooks   []Hook
+	readHooks    []Hook
 }
 
 // SessionManager maps client addresses to active upstream sessions
 type SessionManager struct {
-	sessions map[string]*ClientSession
-	mu       sync.RWMutex
-	backend  *net.UDPAddr
-	frontend *net.UDPConn
-	log      logr.Logger
+	sessions   map[string]*ClientSession
+	mu         sync.RWMutex
+	backend    *net.UDPAddr
+	frontend   *net.UDPConn
+	log        logr.Logger
+	writeHooks []Hook
+	readHooks  []Hook
 }
 
-func newSessionManager(log logr.Logger, backend *net.UDPAddr, frontend *net.UDPConn) *SessionManager {
+func newSessionManager(log logr.Logger, backend *net.UDPAddr, frontend *net.UDPConn, writeHooks []Hook, readHooks []Hook) *SessionManager {
 	sm := &SessionManager{
-		sessions: make(map[string]*ClientSession),
-		backend:  backend,
-		frontend: frontend,
-		log:      log,
+		sessions:   make(map[string]*ClientSession),
+		backend:    backend,
+		frontend:   frontend,
+		log:        log,
+		writeHooks: writeHooks,
+		readHooks:  readHooks,
 	}
 	// Start session cleanup worker for idle sessions
 	go sm.cleanupRoutine()
@@ -91,6 +97,8 @@ func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 		lastActive:   time.Now(),
 		done:         make(chan struct{}),
 		log:          sm.log,
+		writeHooks:   sm.writeHooks,
+		readHooks:    sm.readHooks,
 	}
 
 	sm.sessions[key] = session
@@ -153,6 +161,10 @@ func (s *ClientSession) writeToBackendLoop() {
 			if !ok {
 				return
 			}
+			// Hand off to hooks if any
+			for _, hook := range s.writeHooks {
+				data = hook(data)
+			}
 			_, err := s.backendConn.Write(data)
 			if err != nil {
 				s.log.Error(err, "Failed sending packet to backend", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
@@ -181,7 +193,7 @@ func (s *ClientSession) readFromBackendLoop() {
 				data = hook(data)
 			}
 			// Forward return packet back to original client via frontend socket
-			_, err = s.frontendConn.WriteTo(buf[:n], s.clientAddr)
+			_, err = s.frontendConn.WriteTo(data, s.clientAddr)
 			if err != nil {
 				s.log.Error(err, "Failed returning packet to client", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
 			}

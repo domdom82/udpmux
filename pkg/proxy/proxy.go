@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"sync"
 
@@ -14,7 +15,7 @@ const (
 	packetBatchSize    = 32           // this many packets can be read at once from socket buffer
 	packetBufferSize   = 2 << 15      // 64k max udp length
 	socketBufferSize   = 16 * 2 << 19 // 16M max default socket buffers. limited by net.core.wmem / rmem
-	socketChanCapacity = 20000        // this many packets can be stored in the global packet channel
+	workerChanCapacity = 1000         // this many packets can be stored in a worker packet channel
 )
 
 type Packet struct {
@@ -58,7 +59,7 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 		return fmt.Errorf("invalid backend endpoint '%s' (%w)", p.backendAddr, err)
 	}
 
-	// Maximize frontend receive/write buffers
+	// Maximize frontend receive/write buffers (limited by sysctl net.core.wmem_max / net.core.rmem_max)
 	if err = frontendConn.SetReadBuffer(socketBufferSize); err != nil {
 		log.Error(err, "failed to set socket read buffer size")
 	}
@@ -66,15 +67,17 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 		log.Error(err, "failed to set socket write buffer size")
 	}
 
-	// Create packet channel and session manager
-	packetChan := make(chan Packet, socketChanCapacity)
-	sessionMgr := newSessionManager(log, backendAddr, frontendConn)
+	// Create one channel per worker. Packets from the same client always go to the same worker (address-hashed)
+	workerChans := make([]chan Packet, p.workers)
+	for i := range p.workers {
+		workerChans[i] = make(chan Packet, workerChanCapacity)
+	}
+	sessionMgr := newSessionManager(log, backendAddr, frontendConn, p.writeHooks, p.readHooks)
 
-	// Launch worker pool to process packets from packet channel
 	var wg sync.WaitGroup
 	for i := 0; i < p.workers; i++ {
 		wg.Add(1)
-		go worker(log, packetChan, sessionMgr, &wg)
+		go worker(log, workerChans[i], sessionMgr, &wg)
 	}
 
 	log.Info("UDP Proxy running", "frontend", p.localAddr, "backend", p.backendAddr, "workers", p.workers)
@@ -112,14 +115,18 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 			data := make([]byte, msgLen)
 			copy(data, ms[i].Buffers[0][:msgLen])
 
-			packetChan <- Packet{
+			// Hash client address to a fixed worker to preserve per-client packet order.
+			idx := getWorkerIndex(ms[i].Addr.String(), p.workers)
+			workerChans[idx] <- Packet{
 				Addr: ms[i].Addr,
 				Data: data,
 			}
 		}
 	}
 
-	close(packetChan)
+	for _, ch := range workerChans {
+		close(ch)
+	}
 	wg.Wait()
 	log.Info("Proxy stopped.")
 	return nil
@@ -140,4 +147,11 @@ func worker(log logr.Logger, ch <-chan Packet, sm *SessionManager, wg *sync.Wait
 			}
 		}
 	}
+}
+
+// Map client address to a worker
+func getWorkerIndex(addr string, numWorkers int) int {
+	h := fnv.New32a()
+	h.Write([]byte(addr))
+	return int(h.Sum32()) % numWorkers
 }

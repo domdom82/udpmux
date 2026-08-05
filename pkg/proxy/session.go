@@ -11,6 +11,7 @@ import (
 const (
 	sessionTimeout         = 30 * time.Second // backend needs to respond before this to keep session alive
 	sessionCleanupInterval = 10 * time.Second // clean up idle sessions after this period
+	sessionChanCapacity    = 1000             // this many packets can be stored in a session packet channel
 )
 
 // ClientSession manages a 1:1 duplex connection between a client and the backend endpoint
@@ -49,13 +50,12 @@ func newSessionManager(log logr.Logger, backend *net.UDPAddr, frontend *net.UDPC
 func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 	key := clientAddr.String()
 
-	// Fast path: Return session if it exists and refresh it.
+	// Fast path: Return session if it exists.
 	sm.mu.RLock()
 	session, exists := sm.sessions[key]
 	sm.mu.RUnlock()
 
 	if exists {
-		session.refresh()
 		return session
 	}
 
@@ -64,7 +64,6 @@ func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 
 	// Double check after acquiring write lock
 	if session, exists = sm.sessions[key]; exists {
-		session.refresh()
 		return session
 	}
 
@@ -76,7 +75,7 @@ func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 		return nil
 	}
 
-	// Maximize socket write/read buffers on upstream
+	// Maximize socket write/read buffers on upstream (limited by sysctl net.core.wmem_max / net.core.rmem_max)
 	if err = upstreamConn.SetReadBuffer(socketBufferSize); err != nil {
 		sm.log.Error(err, "Failed to set read socket buffer size", "client", key, "backend", sm.backend)
 	}
@@ -88,7 +87,7 @@ func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 		clientAddr:   clientAddr,
 		backendConn:  upstreamConn,
 		frontendConn: sm.frontend,
-		sendChan:     make(chan []byte, 1000),
+		sendChan:     make(chan []byte, sessionChanCapacity),
 		lastActive:   time.Now(),
 		done:         make(chan struct{}),
 		log:          sm.log,
@@ -110,6 +109,7 @@ func (sm *SessionManager) remove(key string) {
 	defer sm.mu.Unlock()
 
 	if session, exists := sm.sessions[key]; exists {
+		sm.log.Info("Session expired", "client", key, "backend", sm.backend)
 		close(session.done)
 		session.backendConn.Close()
 		delete(sm.sessions, key)
@@ -157,6 +157,7 @@ func (s *ClientSession) writeToBackendLoop() {
 			if err != nil {
 				s.log.Error(err, "Failed sending packet to backend", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
 			}
+			s.refresh()
 		}
 	}
 }
@@ -174,15 +175,17 @@ func (s *ClientSession) readFromBackendLoop() {
 			if err != nil {
 				return // Closed socket or session expired
 			}
-
-			// Backend is alive, refresh session
-			s.refresh()
-
+			// Hand off to hooks if any
+			data := buf[:n]
+			for _, hook := range s.readHooks {
+				data = hook(data)
+			}
 			// Forward return packet back to original client via frontend socket
 			_, err = s.frontendConn.WriteTo(buf[:n], s.clientAddr)
 			if err != nil {
 				s.log.Error(err, "Failed returning packet to client", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
 			}
+			s.refresh()
 		}
 	}
 }

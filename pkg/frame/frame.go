@@ -13,7 +13,7 @@ const (
 	VersionV2 uint8  = 2
 
 	HeaderV1Length = 266 // 4 + 1 + 2 + 2 + 256 + 1 = 266 bytes
-	HeaderV2Length = 11  // 4 + 1 + 2 + 2 + 2 = 11 bytes
+	HeaderV2Length = 11  // 4 + 1 + 2 + 2 + 4 = 13 bytes
 )
 
 // HeaderV1 is the parsed logical header of an udp mux frame.
@@ -34,10 +34,10 @@ type HeaderV2 struct {
 	Version    uint8  // Must be VersionV2.
 	Flags      uint16 // Reserved for later use
 	Length     uint16 // Payload length
-	EndpointId uint16 // Destination endpoint id
+	EndpointId uint32 // Destination endpoint id
 }
 
-func NewHeaderV1(endpoint string) (*HeaderV1, error) {
+func NewHeaderV1(endpoint string, data []byte) (*HeaderV1, error) {
 	if len(endpoint) > 256 {
 		return nil, fmt.Errorf("endpoint too long")
 	}
@@ -49,6 +49,7 @@ func NewHeaderV1(endpoint string) (*HeaderV1, error) {
 		Magic:       Magic,
 		Version:     VersionV1,
 		Flags:       0,
+		Length:      uint16(len(data)),
 		Endpoint:    [256]byte(epBytes),
 		EndpointLen: uint8(len(endpoint)),
 	}
@@ -56,11 +57,12 @@ func NewHeaderV1(endpoint string) (*HeaderV1, error) {
 	return h, nil
 }
 
-func NewHeaderV2(endpointId uint16) *HeaderV2 {
+func NewHeaderV2(endpointId uint32, data []byte) *HeaderV2 {
 	h := &HeaderV2{
 		Magic:      Magic,
 		Version:    VersionV2,
 		Flags:      0,
+		Length:     uint16(len(data)),
 		EndpointId: endpointId,
 	}
 

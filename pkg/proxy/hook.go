@@ -1,3 +1,3 @@
 package proxy
 
-type Hook func([]byte) []byte
+type Hook func(*ClientSession, []byte) ([]byte, error)

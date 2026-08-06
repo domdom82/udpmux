@@ -5,12 +5,10 @@ import (
 )
 
 func Test_DecodeEncodeV1(t *testing.T) {
-	f, err := NewHeaderV1("localhost:1234")
+	f, err := NewHeaderV1("localhost:1234", []byte("hello world"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := []byte("hello world")
-	f.Length = uint16(len(payload))
 
 	marshalled, err := EncodeV1(f)
 
@@ -31,9 +29,7 @@ func Test_DecodeEncodeV1(t *testing.T) {
 }
 
 func Test_DecodeEncodeV2(t *testing.T) {
-	f := NewHeaderV2(uint16(42))
-	payload := []byte("hello world")
-	f.Length = uint16(len(payload))
+	f := NewHeaderV2(uint32(42), []byte("hello world"))
 
 	marshalled, err := EncodeV2(f)
 
@@ -52,12 +48,10 @@ func Test_DecodeEncodeV2(t *testing.T) {
 }
 
 func Test_DecodeEncodeV1asV2(t *testing.T) {
-	f, err := NewHeaderV1("localhost:1234")
+	f, err := NewHeaderV1("localhost:1234", []byte("hello world"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := []byte("hello world")
-	f.Length = uint16(len(payload))
 
 	marshalled, err := EncodeV1(f)
 
@@ -72,9 +66,7 @@ func Test_DecodeEncodeV1asV2(t *testing.T) {
 }
 
 func Test_DecodeEncodeV2asV1(t *testing.T) {
-	f := NewHeaderV2(uint16(42))
-	payload := []byte("hello world")
-	f.Length = uint16(len(payload))
+	f := NewHeaderV2(uint32(42), []byte("hello world"))
 
 	marshalled, err := EncodeV2(f)
 

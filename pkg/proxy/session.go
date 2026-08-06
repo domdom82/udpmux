@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ type ClientSession struct {
 	log          logr.Logger
 	writeHooks   []Hook
 	readHooks    []Hook
+	metaData     map[string]string
 }
 
 // SessionManager maps client addresses to active upstream sessions
@@ -74,24 +76,20 @@ func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 	}
 
 	// Slow path: Create new session
-	// Dial upstream backend endpoint for this specific client session
-	upstreamConn, err := net.DialUDP("udp", nil, sm.backend)
-	if err != nil {
-		sm.log.Error(err, "Failed to dial backend for client", "client", key, "backend", sm.backend)
-		return nil
-	}
-
-	// Maximize socket write/read buffers on upstream (limited by sysctl net.core.wmem_max / net.core.rmem_max)
-	if err = upstreamConn.SetReadBuffer(socketBufferSize); err != nil {
-		sm.log.Error(err, "Failed to set read socket buffer size", "client", key, "backend", sm.backend)
-	}
-	if err = upstreamConn.SetWriteBuffer(socketBufferSize); err != nil {
-		sm.log.Error(err, "Failed to set write socket buffer size", "client", key, "backend", sm.backend)
+	// Dial upstream backend endpoint for this specific client session if needed
+	var backendConn *net.UDPConn
+	var err error
+	if sm.backend != nil {
+		backendConn, err = DialBackend(sm.backend)
+		if err != nil {
+			sm.log.Error(err, "failed to dial backend", "client", key)
+			return nil
+		}
 	}
 
 	session = &ClientSession{
 		clientAddr:   clientAddr,
-		backendConn:  upstreamConn,
+		backendConn:  backendConn,
 		frontendConn: sm.frontend,
 		sendChan:     make(chan []byte, sessionChanCapacity),
 		lastActive:   time.Now(),
@@ -99,6 +97,7 @@ func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 		log:          sm.log,
 		writeHooks:   sm.writeHooks,
 		readHooks:    sm.readHooks,
+		metaData:     make(map[string]string),
 	}
 
 	sm.sessions[key] = session
@@ -162,10 +161,14 @@ func (s *ClientSession) writeToBackendLoop() {
 				return
 			}
 			// Hand off to hooks if any
+			var err error
 			for _, hook := range s.writeHooks {
-				data = hook(data)
+				data, err = hook(s, data)
+				if err != nil {
+					s.log.Error(err, "Failed to call write hook", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
+				}
 			}
-			_, err := s.backendConn.Write(data)
+			_, err = s.backendConn.Write(data)
 			if err != nil {
 				s.log.Error(err, "Failed sending packet to backend", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
 			}
@@ -182,6 +185,10 @@ func (s *ClientSession) readFromBackendLoop() {
 		case <-s.done:
 			return
 		default:
+			if s.backendConn == nil {
+				time.Sleep(100 * time.Millisecond) // No backend connection yet, wait before retrying
+				continue
+			}
 			// Read return packet from backend
 			n, err := s.backendConn.Read(buf)
 			if err != nil {
@@ -190,7 +197,10 @@ func (s *ClientSession) readFromBackendLoop() {
 			// Hand off to hooks if any
 			data := buf[:n]
 			for _, hook := range s.readHooks {
-				data = hook(data)
+				data, err = hook(s, data)
+				if err != nil {
+					s.log.Error(err, "Failed to call read hook", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
+				}
 			}
 			// Forward return packet back to original client via frontend socket
 			_, err = s.frontendConn.WriteTo(data, s.clientAddr)
@@ -200,4 +210,49 @@ func (s *ClientSession) readFromBackendLoop() {
 			s.refresh()
 		}
 	}
+}
+
+func (s *ClientSession) GetBackendConn() *net.UDPConn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.backendConn
+}
+
+func (s *ClientSession) SetBackendConn(conn *net.UDPConn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.backendConn = conn
+}
+
+func (s *ClientSession) SetMetaData(key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.metaData[key] = value
+}
+
+func (s *ClientSession) GetMetaData(key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, exists := s.metaData[key]
+	if !exists {
+		return "", fmt.Errorf("key not found: %s", key)
+	}
+	return value, nil
+}
+
+func DialBackend(backend *net.UDPAddr) (*net.UDPConn, error) {
+	backendConn, err := net.DialUDP("udp", nil, backend)
+	if err != nil {
+		return nil, err
+	}
+
+	// Maximize socket write/read buffers on upstream (limited by sysctl net.core.wmem_max / net.core.rmem_max)
+	if err = backendConn.SetReadBuffer(socketBufferSize); err != nil {
+		return nil, err
+	}
+	if err = backendConn.SetWriteBuffer(socketBufferSize); err != nil {
+		return nil, err
+	}
+
+	return backendConn, nil
 }

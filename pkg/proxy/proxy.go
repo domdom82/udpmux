@@ -63,10 +63,13 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 	}
 	defer frontendConn.Close()
 
-	// Resolve backend endpoint address
-	backendAddr, err := net.ResolveUDPAddr("udp", p.backendAddr)
-	if err != nil {
-		return fmt.Errorf("invalid backend endpoint '%s' (%w)", p.backendAddr, err)
+	// Resolve backend endpoint address if provided
+	var backendAddr *net.UDPAddr
+	if p.backendAddr != "" {
+		backendAddr, err = net.ResolveUDPAddr("udp", p.backendAddr)
+		if err != nil {
+			return fmt.Errorf("invalid backend endpoint '%s' (%w)", p.backendAddr, err)
+		}
 	}
 
 	// Maximize frontend receive/write buffers (limited by sysctl net.core.wmem_max / net.core.rmem_max)

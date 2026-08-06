@@ -2,13 +2,22 @@ package config
 
 import (
 	"fmt"
-	"hash/fnv"
 )
 
 type UdpMuxConfig struct {
 	ListenAddr  string
 	endpoints   map[uint32]string
 	endpointIds map[string]uint32
+}
+
+func NewUdpMuxConfig(listenAddr string) *UdpMuxConfig {
+	cfg := &UdpMuxConfig{
+		ListenAddr:  listenAddr,
+		endpoints:   make(map[uint32]string),
+		endpointIds: make(map[string]uint32),
+	}
+
+	return cfg
 }
 
 func (cfg *UdpMuxConfig) GetEndpointId(addr string) (uint32, error) {
@@ -28,20 +37,14 @@ func (cfg *UdpMuxConfig) GetEndpoint(id uint32) (string, error) {
 }
 
 func (cfg *UdpMuxConfig) RegisterEndpoint(addr string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(addr))
-	id := h.Sum32()
-
+	id := EndpointToId(addr)
 	cfg.endpoints[id] = addr
 	cfg.endpointIds[addr] = id
 	return id
 }
 
 func (cfg *UdpMuxConfig) UnregisterEndpoint(addr string) {
-	h := fnv.New32a()
-	h.Write([]byte(addr))
-	id := h.Sum32()
-
+	id := EndpointToId(addr)
 	delete(cfg.endpoints, id)
 	delete(cfg.endpointIds, addr)
 }

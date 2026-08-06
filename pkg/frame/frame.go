@@ -13,7 +13,7 @@ const (
 	VersionV2 uint8  = 2
 
 	HeaderV1Length = 266 // 4 + 1 + 2 + 2 + 256 + 1 = 266 bytes
-	HeaderV2Length = 11  // 4 + 1 + 2 + 2 + 4 = 13 bytes
+	HeaderV2Length = 13  // 4 + 1 + 2 + 2 + 4 = 13 bytes
 )
 
 // HeaderV1 is the parsed logical header of an udp mux frame.

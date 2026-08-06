@@ -118,7 +118,9 @@ func (sm *SessionManager) remove(key string) {
 	if session, exists := sm.sessions[key]; exists {
 		sm.log.Info("Session expired", "client", key, "backend", sm.backend)
 		close(session.done)
-		session.backendConn.Close()
+		if session.backendConn != nil {
+			session.backendConn.Close()
+		}
 		delete(sm.sessions, key)
 	}
 }
@@ -165,12 +167,17 @@ func (s *ClientSession) writeToBackendLoop() {
 			for _, hook := range s.writeHooks {
 				data, err = hook(s, data)
 				if err != nil {
-					s.log.Error(err, "Failed to call write hook", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
+					s.log.Error(err, "Failed to call write hook", "client", s.clientAddr.String())
 				}
+			}
+			if s.backendConn == nil {
+				s.log.Error(err, "Missing backend connection", "client", s.clientAddr.String())
+				continue
 			}
 			_, err = s.backendConn.Write(data)
 			if err != nil {
 				s.log.Error(err, "Failed sending packet to backend", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
+				continue
 			}
 			s.refresh()
 		}

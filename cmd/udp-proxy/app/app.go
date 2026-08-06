@@ -20,7 +20,7 @@ var (
 	listenAddr string
 	muxAddr    string
 	endpoint   string
-	endpointId uint32
+	protocol   string
 )
 
 // NewCommand creates a new cobra.Command for running udp-proxy.
@@ -39,7 +39,7 @@ func NewCommand() *cobra.Command {
 				ListenAddr: listenAddr,
 				MuxAddr:    muxAddr,
 				Endpoint:   endpoint,
-				EndpointID: endpointId,
+				Protocol:   protocol,
 			}
 			return run(ctx, log, cfg)
 		},
@@ -50,7 +50,7 @@ func NewCommand() *cobra.Command {
 	flags.StringVarP(&listenAddr, "listenAddr", "l", ":7070", "Local address to listen on")
 	flags.StringVarP(&muxAddr, "muxaddr", "m", "", "UDP Mux address in the format <host>:<port>")
 	flags.StringVarP(&endpoint, "endpoint", "e", "", "Endpoint address in the format <host>:<port>")
-	flags.Uint32VarP(&endpointId, "endpointId", "i", 0, "Endpoint id in the format <id>")
+	flags.StringVarP(&protocol, "protocol", "p", "v1", "UDPM Protocol version to use (v1 or v2)")
 	return cmd
 }
 
@@ -58,9 +58,12 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpProxyConfig) error
 	log.Info("config parsed", "config", cfg)
 	log.Info("runtime", "numCPU", runtime.NumCPU(), "GOMAXPROCS", runtime.GOMAXPROCS(0))
 
+	//TODO: validate config
+
 	p := proxy.NewProxy(cfg.ListenAddr, cfg.MuxAddr, runtime.GOMAXPROCS(0))
 
-	if cfg.Endpoint != "" {
+	switch cfg.Protocol {
+	case config.ProtocolV1:
 		var wrapV1 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
 			header, err := frame.NewHeaderV1(cfg.Endpoint, data)
 			if err != nil {
@@ -90,6 +93,33 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpProxyConfig) error
 		})
 
 		p.AddReadHook(unwrapV1)
+	case config.ProtocolV2:
+		endpointId := config.EndpointToId(cfg.Endpoint)
+		var wrapV2 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
+			header := frame.NewHeaderV2(endpointId, data)
+			headerBytes, err := frame.EncodeV2(header)
+			if err != nil {
+				return data, err
+			}
+
+			return append(headerBytes, data...), nil
+		})
+
+		p.AddWriteHook(wrapV2)
+
+		var unwrapV2 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
+			header, err := frame.DecodeV2(data[:frame.HeaderV2Length])
+			if err != nil {
+				return data, err
+			}
+			if header.EndpointId != endpointId {
+				return data, fmt.Errorf("invalid endpoint id: '%d' expected '%d'", header.EndpointId, endpointId)
+			}
+
+			return data[frame.HeaderV2Length : frame.HeaderV2Length+int(header.Length)], nil
+		})
+
+		p.AddReadHook(unwrapV2)
 	}
 
 	return p.ListenAndServe(ctx, log)

@@ -33,9 +33,7 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			cfg := &config.UdpMuxConfig{
-				ListenAddr: listenAddr,
-			}
+			cfg := config.NewUdpMuxConfig(listenAddr)
 			return run(ctx, log, cfg)
 		},
 	}
@@ -50,6 +48,8 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
 	log.Info("config parsed", "config", cfg)
 	log.Info("runtime", "numCPU", runtime.NumCPU(), "GOMAXPROCS", runtime.GOMAXPROCS(0))
 
+	//TODO: validate config
+	
 	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0))
 
 	var unwrap = proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {

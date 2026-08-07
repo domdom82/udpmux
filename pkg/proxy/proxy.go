@@ -24,18 +24,20 @@ type Packet struct {
 }
 
 type Proxy struct {
-	localAddr   string
-	backendAddr string
-	workers     int
-	writeHooks  []Hook
-	readHooks   []Hook
+	localAddr    string
+	backendAddr  string
+	workers      int
+	addrToWorker map[net.Addr]int
+	writeHooks   []Hook
+	readHooks    []Hook
 }
 
 func NewProxy(localAddr string, backendAddr string, workers int) *Proxy {
 	p := &Proxy{
-		localAddr:   localAddr,
-		backendAddr: backendAddr,
-		workers:     workers,
+		localAddr:    localAddr,
+		backendAddr:  backendAddr,
+		workers:      workers,
+		addrToWorker: make(map[net.Addr]int),
 	}
 
 	return p
@@ -128,8 +130,8 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 			data := make([]byte, msgLen)
 			copy(data, ms[i].Buffers[0][:msgLen])
 
-			// Hash client address to a fixed worker to preserve per-client packet order.
-			idx := getWorkerIndex(ms[i].Addr.String(), p.workers)
+			// Map client address to a fixed worker to preserve per-client packet order.
+			idx := p.getWorkerIndex(ms[i].Addr)
 			workerChans[idx] <- Packet{
 				Addr: ms[i].Addr,
 				Data: data,
@@ -143,6 +145,21 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 	wg.Wait()
 	log.Info("Proxy stopped.")
 	return nil
+}
+
+// Map client address to a worker
+func (p *Proxy) getWorkerIndex(addr net.Addr) int {
+	var (
+		workerIdx int
+		cacheHit  bool
+	)
+	if workerIdx, cacheHit = p.addrToWorker[addr]; !cacheHit {
+		h := fnv.New32a()
+		h.Write([]byte(addr.String()))
+		workerIdx = int(h.Sum32()) % p.workers
+		p.addrToWorker[addr] = workerIdx
+	}
+	return workerIdx
 }
 
 // Worker dispatch logic: Routes packet from client channel to session forwarder
@@ -160,11 +177,4 @@ func worker(log logr.Logger, ch <-chan Packet, sm *SessionManager, wg *sync.Wait
 			}
 		}
 	}
-}
-
-// Map client address to a worker
-func getWorkerIndex(addr string, numWorkers int) int {
-	h := fnv.New32a()
-	h.Write([]byte(addr))
-	return int(h.Sum32()) % numWorkers
 }

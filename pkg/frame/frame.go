@@ -13,28 +13,30 @@ const (
 	VersionV2 uint8  = 2
 
 	HeaderV1Length = 266 // 4 + 1 + 2 + 2 + 256 + 1 = 266 bytes
-	HeaderV2Length = 13  // 4 + 1 + 2 + 2 + 4 = 13 bytes
+	HeaderV2Length = 17  // 4 + 1 + 2 + 2 + 8 = 17 bytes
 )
 
 // HeaderV1 is the parsed logical header of an udp mux frame.
-// Requires fixed-width fields for encoding.
+// V1 needs more space but allows arbitrary endpoints beyond the mux.
 type HeaderV1 struct {
 	Magic       uint32    // Must be Magic.
 	Version     uint8     // Must be VersionV1.
 	Flags       uint16    // Reserved for later use
 	Length      uint16    // Payload length
-	Endpoint    [256]byte // Destination endpoint
 	EndpointLen uint8     // Endpoint string length
+	Endpoint    [256]byte // Destination endpoint
 }
 
+type EndpointId uint64
+
 // HeaderV2 is the parsed logical header of an udp mux frame V2.
-// V2 requires endpoints be registered at the mux ahead of time.
+// V2 needs less space but requires endpoints be registered at the mux ahead of time.
 type HeaderV2 struct {
-	Magic      uint32 // Must be Magic.
-	Version    uint8  // Must be VersionV2.
-	Flags      uint16 // Reserved for later use
-	Length     uint16 // Payload length
-	EndpointId uint32 // Destination endpoint id
+	Magic      uint32     // Must be Magic.
+	Version    uint8      // Must be VersionV2.
+	Flags      uint16     // Reserved for later use
+	Length     uint16     // Payload length
+	EndpointId EndpointId // Destination endpoint id
 }
 
 func NewHeaderV1(endpoint string, data []byte) (*HeaderV1, error) {
@@ -57,7 +59,7 @@ func NewHeaderV1(endpoint string, data []byte) (*HeaderV1, error) {
 	return h, nil
 }
 
-func NewHeaderV2(endpointId uint32, data []byte) *HeaderV2 {
+func NewHeaderV2(endpointId EndpointId, data []byte) *HeaderV2 {
 	h := &HeaderV2{
 		Magic:      Magic,
 		Version:    VersionV2,

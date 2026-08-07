@@ -48,8 +48,11 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
 	log.Info("config parsed", "config", cfg)
 	log.Info("runtime", "numCPU", runtime.NumCPU(), "GOMAXPROCS", runtime.GOMAXPROCS(0))
 
-	//TODO: validate config
-	
+	err := cfg.Validate()
+	if err != nil {
+		return err
+	}
+
 	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0))
 
 	var unwrap = proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
@@ -58,7 +61,7 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
 			headerV1    *frame.HeaderV1
 			err         error
 			endpointStr string
-			endpointId  uint32
+			endpointId  frame.EndpointId
 		)
 
 		// try V2 first
@@ -112,7 +115,7 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
 			headerV1    *frame.HeaderV1
 			headerBytes []byte
 			endpointStr string
-			endpointId  uint32
+			endpointId  frame.EndpointId
 			err         error
 		)
 		endpointStr, err = s.GetMetaData("endpoint")

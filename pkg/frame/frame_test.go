@@ -29,7 +29,7 @@ func Test_DecodeEncodeV1(t *testing.T) {
 }
 
 func Test_DecodeEncodeV2(t *testing.T) {
-	f := NewHeaderV2(uint32(42), []byte("hello world"))
+	f := NewHeaderV2(EndpointId(42), []byte("hello world"))
 
 	marshalled, err := EncodeV2(f)
 
@@ -66,7 +66,7 @@ func Test_DecodeEncodeV1asV2(t *testing.T) {
 }
 
 func Test_DecodeEncodeV2asV1(t *testing.T) {
-	f := NewHeaderV2(uint32(42), []byte("hello world"))
+	f := NewHeaderV2(EndpointId(42), []byte("hello world"))
 
 	marshalled, err := EncodeV2(f)
 

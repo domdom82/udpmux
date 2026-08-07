@@ -17,10 +17,10 @@ import (
 const Name = "udp-proxy"
 
 var (
-	listenAddr string
-	muxAddr    string
-	endpoint   string
-	protocol   string
+	listenAddr   string
+	muxAddr      string
+	endpointAddr string
+	protocol     string
 )
 
 // NewCommand creates a new cobra.Command for running udp-proxy.
@@ -36,10 +36,10 @@ func NewCommand() *cobra.Command {
 			}
 			ctx := cmd.Context()
 			cfg := &config.UdpProxyConfig{
-				ListenAddr: listenAddr,
-				MuxAddr:    muxAddr,
-				Endpoint:   endpoint,
-				Protocol:   protocol,
+				ListenAddr:   listenAddr,
+				MuxAddr:      muxAddr,
+				EndpointAddr: endpointAddr,
+				Protocol:     protocol,
 			}
 			return run(ctx, log, cfg)
 		},
@@ -48,8 +48,8 @@ func NewCommand() *cobra.Command {
 	flags := cmd.Flags()
 	verflag.AddFlags(flags)
 	flags.StringVarP(&listenAddr, "listenAddr", "l", ":7070", "Local address to listen on")
-	flags.StringVarP(&muxAddr, "muxaddr", "m", "", "UDP Mux address in the format <host>:<port>")
-	flags.StringVarP(&endpoint, "endpoint", "e", "", "Endpoint address in the format <host>:<port>")
+	flags.StringVarP(&muxAddr, "muxAddr", "m", "", "UDP Mux address in the format <host>:<port>")
+	flags.StringVarP(&endpointAddr, "endpointAddr", "e", "", "Endpoint address in the format <host>:<port>")
 	flags.StringVarP(&protocol, "protocol", "p", "v1", "UDPM Protocol version to use (v1 or v2)")
 	return cmd
 }
@@ -58,14 +58,17 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpProxyConfig) error
 	log.Info("config parsed", "config", cfg)
 	log.Info("runtime", "numCPU", runtime.NumCPU(), "GOMAXPROCS", runtime.GOMAXPROCS(0))
 
-	//TODO: validate config
+	err := cfg.Validate()
+	if err != nil {
+		return err
+	}
 
 	p := proxy.NewProxy(cfg.ListenAddr, cfg.MuxAddr, runtime.GOMAXPROCS(0))
 
 	switch cfg.Protocol {
 	case config.ProtocolV1:
 		var wrapV1 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
-			header, err := frame.NewHeaderV1(cfg.Endpoint, data)
+			header, err := frame.NewHeaderV1(cfg.EndpointAddr, data)
 			if err != nil {
 				return data, err
 			}
@@ -85,8 +88,8 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpProxyConfig) error
 				return data, err
 			}
 			endpointStr := string(header.Endpoint[:header.EndpointLen])
-			if endpointStr != cfg.Endpoint {
-				return data, fmt.Errorf("invalid endpoint: '%s' expected '%s'", endpointStr, cfg.Endpoint)
+			if endpointStr != cfg.EndpointAddr {
+				return data, fmt.Errorf("invalid endpoint: '%s' expected '%s'", endpointStr, cfg.EndpointAddr)
 			}
 
 			return data[frame.HeaderV1Length : frame.HeaderV1Length+int(header.Length)], nil
@@ -94,7 +97,7 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpProxyConfig) error
 
 		p.AddReadHook(unwrapV1)
 	case config.ProtocolV2:
-		endpointId := config.EndpointToId(cfg.Endpoint)
+		endpointId := config.EndpointToId(cfg.EndpointAddr)
 		var wrapV2 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
 			header := frame.NewHeaderV2(endpointId, data)
 			headerBytes, err := frame.EncodeV2(header)

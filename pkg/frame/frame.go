@@ -29,6 +29,10 @@ type HeaderV1 struct {
 
 type EndpointId uint64
 
+func (id EndpointId) String() string {
+	return strconv.FormatUint(uint64(id), 10)
+}
+
 // HeaderV2 is the parsed logical header of an udp mux frame V2.
 // V2 needs less space but requires endpoints be registered at the mux ahead of time.
 type HeaderV2 struct {

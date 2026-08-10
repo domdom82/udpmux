@@ -8,6 +8,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.57.0
+	golang.org/x/sync v0.22.0
 	k8s.io/component-base v0.36.2
 	k8s.io/klog/v2 v2.140.0
 	sigs.k8s.io/controller-runtime v0.24.1

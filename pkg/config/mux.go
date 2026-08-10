@@ -7,16 +7,20 @@ import (
 )
 
 type UdpMuxConfig struct {
-	ListenAddr  string
-	endpoints   map[frame.EndpointId]string
-	endpointIds map[string]frame.EndpointId
+	ListenAddr    string // The ip:port the udp proxy will listen on for UDP traffic
+	ApiListenAddr string // The ip:port the udp proxy will listen on for API traffic
+	Protocol      string // The protocol version to use
+	endpoints     map[frame.EndpointId]string
+	endpointIds   map[string]frame.EndpointId
 }
 
-func NewUdpMuxConfig(listenAddr string) *UdpMuxConfig {
+func NewUdpMuxConfig(listenAddr string, apiListenAddr string, protocol string) *UdpMuxConfig {
 	cfg := &UdpMuxConfig{
-		ListenAddr:  listenAddr,
-		endpoints:   make(map[frame.EndpointId]string),
-		endpointIds: make(map[string]frame.EndpointId),
+		ListenAddr:    listenAddr,
+		ApiListenAddr: apiListenAddr,
+		Protocol:      protocol,
+		endpoints:     make(map[frame.EndpointId]string),
+		endpointIds:   make(map[string]frame.EndpointId),
 	}
 
 	return cfg
@@ -45,14 +49,25 @@ func (cfg *UdpMuxConfig) RegisterEndpoint(addr string) frame.EndpointId {
 	return id
 }
 
-func (cfg *UdpMuxConfig) UnregisterEndpoint(addr string) {
+func (cfg *UdpMuxConfig) UnregisterEndpoint(addr string) error {
+	if _, err := cfg.GetEndpointId(addr); err != nil {
+		return err
+	}
 	id := EndpointToId(addr)
 	delete(cfg.endpoints, id)
 	delete(cfg.endpointIds, addr)
+	return nil
+}
+
+func (cfg *UdpMuxConfig) NumEndpoints() int {
+	return len(cfg.endpoints)
 }
 
 func (cfg *UdpMuxConfig) Validate() error {
 	if err := validateAddr(cfg.ListenAddr, "listen address"); err != nil {
+		return err
+	}
+	if err := validateAddr(cfg.ApiListenAddr, "api listen address"); err != nil {
 		return err
 	}
 

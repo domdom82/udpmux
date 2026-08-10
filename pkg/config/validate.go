@@ -5,6 +5,11 @@ import (
 	"net"
 )
 
+const (
+	ProtocolV1 = "v1"
+	ProtocolV2 = "v2"
+)
+
 func validateAddr(addr, title string) error {
 	if addr == "" {
 		return fmt.Errorf("%s is required", title)

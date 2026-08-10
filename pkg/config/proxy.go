@@ -7,11 +7,6 @@ import (
 	"github.com/domdom82/udpmux/pkg/frame"
 )
 
-const (
-	ProtocolV1 = "v1"
-	ProtocolV2 = "v2"
-)
-
 type UdpProxyConfig struct {
 	ListenAddr   string // The ip:port the udp proxy will listen on.
 	MuxAddr      string // The ip:port the udp proxy will forward to.

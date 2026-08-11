@@ -24,25 +24,35 @@ func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) er
 			endpointId  frame.EndpointId
 		)
 
-		// try V2 first
-		headerV2, err = frame.DecodeV2(data[:frame.HeaderV2Length])
-		if err != nil {
-			// fallback to V1
+		dataLen := len(data)
+
+		switch cfg.Protocol {
+		case config.ProtocolV1:
+			if dataLen < frame.HeaderV1Length {
+				return data, fmt.Errorf("invalid v1 header length: %d", dataLen)
+			}
 			headerV1, err = frame.DecodeV1(data[:frame.HeaderV1Length])
 			if err != nil {
-				log.Error(err, "failed to decode header")
-				return data, err
+				return data, fmt.Errorf("failed to decode v1 header: %w", err)
 			}
 			endpointStr = string(headerV1.Endpoint[:headerV1.EndpointLen])
-		} else {
+		case config.ProtocolV2:
+			if dataLen < frame.HeaderV2Length {
+				return data, fmt.Errorf("invalid v2 header length: %d", dataLen)
+			}
+			headerV2, err = frame.DecodeV2(data[:frame.HeaderV2Length])
+			if err != nil {
+				return data, fmt.Errorf("failed to decode v2 header: %w", err)
+			}
 			endpointId = headerV2.EndpointId
 			endpointStr, err = cfg.GetEndpoint(endpointId)
 			if err != nil {
 				return data, err
 			}
+
 		}
 
-		// Check if we need to connect to the backend
+		// Check if we need to connect to the backend first
 		if s.GetBackendConn() == nil {
 			backendAddr, err := net.ResolveUDPAddr("udp", endpointStr)
 			if err != nil {
@@ -82,9 +92,8 @@ func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) er
 		if err != nil {
 			return data, err
 		}
-		endpointId, err = cfg.GetEndpointId(endpointStr)
-		if err != nil {
-			// V1 case
+		switch cfg.Protocol {
+		case config.ProtocolV1:
 			headerV1, err = frame.NewHeaderV1(endpointStr, data)
 			if err != nil {
 				return data, err
@@ -93,14 +102,18 @@ func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) er
 			if err != nil {
 				return data, err
 			}
-		} else {
-			// V2 case
+		case config.ProtocolV2:
+			endpointId, err = cfg.GetEndpointId(endpointStr)
+			if err != nil {
+				return data, err
+			}
 			headerV2 = frame.NewHeaderV2(endpointId, data)
 			headerBytes, err = frame.EncodeV2(headerV2)
 			if err != nil {
 				return data, err
 			}
 		}
+
 		wrappedFrame := append(headerBytes, data...)
 		return wrappedFrame, nil
 	})

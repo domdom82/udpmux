@@ -30,6 +30,33 @@ type ClientSession struct {
 	metaData     map[string]string
 }
 
+func udpConnStr(clientAddr net.Addr, conn *net.UDPConn) string {
+	connStr := "<nil>"
+	if conn != nil {
+		localStr := "<nil>"
+		remoteStr := "<nil>"
+		if conn.LocalAddr() != nil {
+			if clientAddr != nil {
+				localStr = clientAddr.String()
+				remoteStr = conn.LocalAddr().String()
+			} else {
+				localStr = conn.LocalAddr().String()
+			}
+		}
+		if conn.RemoteAddr() != nil {
+			remoteStr = conn.RemoteAddr().String()
+		}
+		connStr = fmt.Sprintf("%s -> %s", localStr, remoteStr)
+	}
+	return connStr
+}
+
+func (s *ClientSession) String() string {
+	iso8601z := "2006-01-02T15:04:05.000Z"
+	lastActiveStr := s.lastActive.UTC().Format(iso8601z)
+	return fmt.Sprintf("frontend %s backend %s lastActive %s", udpConnStr(s.clientAddr, s.frontendConn), udpConnStr(nil, s.backendConn), lastActiveStr)
+}
+
 // SessionManager maps client addresses to active upstream sessions
 type SessionManager struct {
 	sessions   map[string]*ClientSession
@@ -108,6 +135,7 @@ func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 	go session.writeToBackendLoop()
 	go session.readFromBackendLoop()
 
+	sm.log.Info("Session created", "session", session)
 	return session
 }
 
@@ -116,7 +144,7 @@ func (sm *SessionManager) remove(key string) {
 	defer sm.mu.Unlock()
 
 	if session, exists := sm.sessions[key]; exists {
-		sm.log.Info("Session expired", "client", key, "backend", sm.backend)
+		sm.log.Info("Session expired", "session", session)
 		close(session.done)
 		if session.backendConn != nil {
 			session.backendConn.Close()

@@ -14,6 +14,8 @@ const (
 
 	HeaderV1Length = 266 // 4 + 1 + 2 + 2 + 256 + 1 = 266 bytes
 	HeaderV2Length = 17  // 4 + 1 + 2 + 2 + 8 = 17 bytes
+
+	FlagPing uint16 = 1 << 0 // Ping flag. Respond with a pong frame. Echo payload if present.
 )
 
 // HeaderV1 is the parsed logical header of an udp mux frame.
@@ -21,7 +23,7 @@ const (
 type HeaderV1 struct {
 	Magic       uint32    // Must be Magic.
 	Version     uint8     // Must be VersionV1.
-	Flags       uint16    // Reserved for later use
+	Flags       uint16    // Frame flags
 	Length      uint16    // Payload length
 	EndpointLen uint8     // Endpoint string length
 	Endpoint    [256]byte // Destination endpoint
@@ -38,7 +40,7 @@ func (id EndpointId) String() string {
 type HeaderV2 struct {
 	Magic      uint32     // Must be Magic.
 	Version    uint8      // Must be VersionV2.
-	Flags      uint16     // Reserved for later use
+	Flags      uint16     // Frame flags
 	Length     uint16     // Payload length
 	EndpointId EndpointId // Destination endpoint id
 }

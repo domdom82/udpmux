@@ -22,6 +22,7 @@ func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) er
 			err         error
 			endpointStr string
 			endpointId  frame.EndpointId
+			isPing      bool
 		)
 
 		dataLen := len(data)
@@ -35,6 +36,7 @@ func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) er
 			if err != nil {
 				return data, fmt.Errorf("failed to decode v1 header: %w", err)
 			}
+			isPing = headerV1.Flags&frame.FlagPing != 0
 			endpointStr = string(headerV1.Endpoint[:headerV1.EndpointLen])
 		case config.ProtocolV2:
 			if dataLen < frame.HeaderV2Length {
@@ -44,12 +46,29 @@ func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) er
 			if err != nil {
 				return data, fmt.Errorf("failed to decode v2 header: %w", err)
 			}
+			isPing = headerV2.Flags&frame.FlagPing != 0
 			endpointId = headerV2.EndpointId
 			endpointStr, err = cfg.GetEndpoint(endpointId)
 			if err != nil {
 				return data, err
 			}
+		}
 
+		// Extract the inner frame data based on the protocol version
+		var innerFrame []byte
+		switch {
+		case headerV1 != nil:
+			innerFrame = data[frame.HeaderV1Length : frame.HeaderV1Length+int(headerV1.Length)]
+		case headerV2 != nil:
+			innerFrame = data[frame.HeaderV2Length : frame.HeaderV2Length+int(headerV2.Length)]
+		}
+
+		// Check if this is a ping frame and if we should respond to it
+		if isPing {
+			log.Info("received ping frame", "session", s, "pingBytes", len(innerFrame), "totalBytes", dataLen)
+			_, err = s.GetFrontendConn().WriteTo(data, s.GetClientAddr())
+			s.SetMetaData(proxy.SessionMetaTypeKey, proxy.SessionMetaTypeNoBackend)
+			return nil, err
 		}
 
 		// Check if we need to connect to the backend first
@@ -64,16 +83,9 @@ func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) er
 			}
 
 			s.SetBackendConn(backendConn)
-			s.SetMetaData("endpoint", endpointStr)
+			s.SetMetaData(proxy.SessionMetaEndpointKey, endpointStr)
 		}
 
-		var innerFrame []byte
-		switch {
-		case headerV1 != nil:
-			innerFrame = data[frame.HeaderV1Length : frame.HeaderV1Length+int(headerV1.Length)]
-		case headerV2 != nil:
-			innerFrame = data[frame.HeaderV2Length : frame.HeaderV2Length+int(headerV2.Length)]
-		}
 		return innerFrame, nil
 	})
 

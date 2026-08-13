@@ -2,15 +2,13 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 
 	"github.com/domdom82/udpmux/pkg/config"
-	"github.com/domdom82/udpmux/pkg/frame"
-	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/domdom82/udpmux/pkg/utils"
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/component-base/version/verflag"
 )
 
@@ -21,6 +19,8 @@ var (
 	muxAddr      string
 	endpointAddr string
 	protocol     string
+	ping         bool
+	pingsize     int
 )
 
 // NewCommand creates a new cobra.Command for running udp-proxy.
@@ -40,6 +40,8 @@ func NewCommand() *cobra.Command {
 				MuxAddr:      muxAddr,
 				EndpointAddr: endpointAddr,
 				Protocol:     protocol,
+				Ping:         ping,
+				PingSize:     pingsize,
 			}
 			return run(ctx, log, cfg)
 		},
@@ -51,6 +53,9 @@ func NewCommand() *cobra.Command {
 	flags.StringVarP(&muxAddr, "muxAddr", "m", "", "UDP Mux address in the format <host>:<port>")
 	flags.StringVarP(&endpointAddr, "endpointAddr", "e", "", "Endpoint address in the format <host>:<port>")
 	flags.StringVarP(&protocol, "protocol", "p", "v1", "UDPM Protocol version to use (v1 or v2)")
+	flags.BoolVarP(&ping, "ping", "i", false, "If set, the udp proxy will only send pings to the mux.")
+	flags.IntVarP(&pingsize, "size", "s", 0, "Size of the ping payload to send. Only used if ping is set.")
+
 	return cmd
 }
 
@@ -63,67 +68,11 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpProxyConfig) error
 		return err
 	}
 
-	p := proxy.NewProxy(cfg.ListenAddr, cfg.MuxAddr, runtime.GOMAXPROCS(0))
-
-	switch cfg.Protocol {
-	case config.ProtocolV1:
-		var wrapV1 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
-			header, err := frame.NewHeaderV1(cfg.EndpointAddr, data)
-			if err != nil {
-				return data, err
-			}
-			headerBytes, err := frame.EncodeV1(header)
-			if err != nil {
-				return data, err
-			}
-
-			return append(headerBytes, data...), nil
-		})
-
-		p.AddWriteHook(wrapV1)
-
-		var unwrapV1 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
-			header, err := frame.DecodeV1(data[:frame.HeaderV1Length])
-			if err != nil {
-				return data, err
-			}
-			endpointStr := string(header.Endpoint[:header.EndpointLen])
-			if endpointStr != cfg.EndpointAddr {
-				return data, fmt.Errorf("invalid endpoint: '%s' expected '%s'", endpointStr, cfg.EndpointAddr)
-			}
-
-			return data[frame.HeaderV1Length : frame.HeaderV1Length+int(header.Length)], nil
-		})
-
-		p.AddReadHook(unwrapV1)
-	case config.ProtocolV2:
-		endpointId := config.EndpointToId(cfg.EndpointAddr)
-		var wrapV2 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
-			header := frame.NewHeaderV2(endpointId, data)
-			headerBytes, err := frame.EncodeV2(header)
-			if err != nil {
-				return data, err
-			}
-
-			return append(headerBytes, data...), nil
-		})
-
-		p.AddWriteHook(wrapV2)
-
-		var unwrapV2 = proxy.Hook(func(_ *proxy.ClientSession, data []byte) ([]byte, error) {
-			header, err := frame.DecodeV2(data[:frame.HeaderV2Length])
-			if err != nil {
-				return data, err
-			}
-			if header.EndpointId != endpointId {
-				return data, fmt.Errorf("invalid endpoint id: '%d' expected '%d'", header.EndpointId, endpointId)
-			}
-
-			return data[frame.HeaderV2Length : frame.HeaderV2Length+int(header.Length)], nil
-		})
-
-		p.AddReadHook(unwrapV2)
+	wg := errgroup.Group{}
+	wg.Go(func() error { return runProxy(ctx, log, cfg) })
+	if cfg.Ping {
+		wg.Go(func() error { return runPing(ctx, log, cfg) })
 	}
 
-	return p.ListenAndServe(ctx, log)
+	return wg.Wait()
 }

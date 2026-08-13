@@ -12,6 +12,8 @@ type UdpProxyConfig struct {
 	MuxAddr      string // The ip:port the udp proxy will forward to.
 	EndpointAddr string // The ip:port the udp mux will forward to.
 	Protocol     string // The protocol version to use
+	Ping         bool   // If set, the udp proxy will send a ping to the endpoint with PingSize bytes of data sent.
+	PingSize     int    // The size of the ping payload to send. Only used if Ping is set.
 }
 
 func EndpointToId(endpoint string) frame.EndpointId {
@@ -41,6 +43,12 @@ func (cfg *UdpProxyConfig) Validate() error {
 	case ProtocolV1, ProtocolV2:
 	default:
 		return fmt.Errorf("invalid protocol '%s'", cfg.Protocol)
+	}
+
+	if cfg.Ping {
+		if cfg.PingSize < 0 {
+			return fmt.Errorf("ping size must be non-negative")
+		}
 	}
 
 	return nil

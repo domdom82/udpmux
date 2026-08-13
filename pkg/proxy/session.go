@@ -10,9 +10,12 @@ import (
 )
 
 const (
-	sessionTimeout         = 30 * time.Second // backend needs to respond before this to keep session alive
-	sessionCleanupInterval = 10 * time.Second // clean up idle sessions after this period
-	sessionChanCapacity    = 1000             // this many packets can be stored in a session packet channel
+	sessionTimeout           = 30 * time.Second // backend needs to respond before this to keep session alive
+	sessionCleanupInterval   = 10 * time.Second // clean up idle sessions after this period
+	sessionChanCapacity      = 1000             // this many packets can be stored in a session packet channel
+	SessionMetaEndpointKey   = "endpoint"       // key for storing the endpoint address in session metadata
+	SessionMetaTypeKey       = "type"           // key for storing the session type in session metadata
+	SessionMetaTypeNoBackend = "no_backend"     // value for session type metadata indicating no backend connection is needed (e.g., for ping responses)
 )
 
 // ClientSession manages a 1:1 duplex connection between a client and the backend endpoint
@@ -52,9 +55,7 @@ func udpConnStr(clientAddr net.Addr, conn *net.UDPConn) string {
 }
 
 func (s *ClientSession) String() string {
-	iso8601z := "2006-01-02T15:04:05.000Z"
-	lastActiveStr := s.lastActive.UTC().Format(iso8601z)
-	return fmt.Sprintf("frontend %s backend %s lastActive %s", udpConnStr(s.clientAddr, s.frontendConn), udpConnStr(nil, s.backendConn), lastActiveStr)
+	return fmt.Sprintf("frontend %s backend %s age %.2fs", udpConnStr(s.clientAddr, s.frontendConn), udpConnStr(nil, s.backendConn), time.Now().Sub(s.lastActive).Seconds())
 }
 
 // SessionManager maps client addresses to active upstream sessions
@@ -190,24 +191,28 @@ func (s *ClientSession) writeToBackendLoop() {
 			if !ok {
 				return
 			}
+			s.refresh()
 			// Hand off to hooks if any
 			var err error
 			for _, hook := range s.writeHooks {
 				data, err = hook(s, data)
 				if err != nil {
-					s.log.Error(err, "Failed to call write hook", "client", s.clientAddr.String())
+					s.log.Error(err, "Failed to call write hook", "session", s)
 				}
 			}
+			if sessionType, _ := s.GetMetaData(SessionMetaTypeKey); sessionType == SessionMetaTypeNoBackend {
+				// No backend connection needed, just drop the packet
+				continue
+			}
 			if s.backendConn == nil {
-				s.log.Error(err, "Missing backend connection", "client", s.clientAddr.String())
+				s.log.Error(err, "Missing backend connection", "session", s)
 				continue
 			}
 			_, err = s.backendConn.Write(data)
 			if err != nil {
-				s.log.Error(err, "Failed sending packet to backend", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
+				s.log.Error(err, "Failed sending packet to backend", "session", s)
 				continue
 			}
-			s.refresh()
 		}
 	}
 }
@@ -229,6 +234,7 @@ func (s *ClientSession) readFromBackendLoop() {
 			if err != nil {
 				return // Closed socket or session expired
 			}
+			s.refresh()
 			// Hand off to hooks if any
 			data := buf[:n]
 			for _, hook := range s.readHooks {
@@ -242,9 +248,20 @@ func (s *ClientSession) readFromBackendLoop() {
 			if err != nil {
 				s.log.Error(err, "Failed returning packet to client", "client", s.clientAddr.String(), "backend", s.backendConn.RemoteAddr())
 			}
-			s.refresh()
 		}
 	}
+}
+
+func (s *ClientSession) GetClientAddr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clientAddr
+}
+
+func (s *ClientSession) GetFrontendConn() *net.UDPConn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.frontendConn
 }
 
 func (s *ClientSession) GetBackendConn() *net.UDPConn {

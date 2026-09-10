@@ -27,7 +27,7 @@ type Proxy struct {
 	localAddr    string
 	backendAddr  string
 	workers      int
-	addrToWorker map[net.Addr]int
+	addrToWorker map[string]int
 	writeHooks   []Hook
 	readHooks    []Hook
 }
@@ -37,7 +37,7 @@ func NewProxy(localAddr string, backendAddr string, workers int) *Proxy {
 		localAddr:    localAddr,
 		backendAddr:  backendAddr,
 		workers:      workers,
-		addrToWorker: make(map[net.Addr]int),
+		addrToWorker: make(map[string]int),
 	}
 
 	return p
@@ -132,9 +132,10 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 
 			// Map client address to a fixed worker to preserve per-client packet order.
 			idx := p.getWorkerIndex(ms[i].Addr)
-			workerChans[idx] <- Packet{
-				Addr: ms[i].Addr,
-				Data: data,
+			select {
+			case workerChans[idx] <- Packet{Addr: ms[i].Addr, Data: data}:
+			default:
+				log.Info("worker queue full, dropping packet", "addr", ms[i].Addr)
 			}
 		}
 	}
@@ -149,17 +150,15 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 
 // Map client address to a worker
 func (p *Proxy) getWorkerIndex(addr net.Addr) int {
-	var (
-		workerIdx int
-		cacheHit  bool
-	)
-	if workerIdx, cacheHit = p.addrToWorker[addr]; !cacheHit {
-		h := fnv.New32a()
-		h.Write([]byte(addr.String()))
-		workerIdx = int(h.Sum32()) % p.workers
-		p.addrToWorker[addr] = workerIdx
+	key := addr.String()
+	if idx, ok := p.addrToWorker[key]; ok {
+		return idx
 	}
-	return workerIdx
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	idx := int(h.Sum32()) % p.workers
+	p.addrToWorker[key] = idx
+	return idx
 }
 
 // Worker dispatch logic: Routes packet from client channel to session forwarder

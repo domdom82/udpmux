@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/domdom82/udpmux/pkg/config"
 	"github.com/go-logr/logr"
@@ -22,6 +23,11 @@ func addApi(log logr.Logger, cfg *config.UdpMuxConfig, mux *http.ServeMux) {
 		code := http.StatusInternalServerError
 		switch r.Method {
 		case http.MethodGet:
+			if endpoint == "" {
+				response = listEndpoints(cfg)
+				code = http.StatusOK
+				break
+			}
 			id, err := cfg.GetEndpointId(endpoint)
 			if err != nil {
 				response = msgNotFound
@@ -52,4 +58,13 @@ func addApi(log logr.Logger, cfg *config.UdpMuxConfig, mux *http.ServeMux) {
 		w.Write([]byte(response))
 	})
 
+}
+
+func listEndpoints(cfg *config.UdpMuxConfig) string {
+	endpointMappings := cfg.ListEndpointMappings()
+	response := strings.Builder{}
+	for id, endpoint := range endpointMappings {
+		response.WriteString(id.String() + "\t" + endpoint + "\n")
+	}
+	return response.String()
 }

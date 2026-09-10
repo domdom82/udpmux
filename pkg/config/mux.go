@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/domdom82/udpmux/pkg/frame"
 )
@@ -24,6 +25,12 @@ func NewUdpMuxConfig(listenAddr string, apiListenAddr string, protocol string) *
 	}
 
 	return cfg
+}
+
+func (cfg *UdpMuxConfig) ListEndpointMappings() map[frame.EndpointId]string {
+	mappings := make(map[frame.EndpointId]string)
+	maps.Copy(mappings, cfg.endpoints)
+	return mappings
 }
 
 func (cfg *UdpMuxConfig) GetEndpointId(addr string) (frame.EndpointId, error) {

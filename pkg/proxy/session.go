@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -24,7 +25,7 @@ type ClientSession struct {
 	backendConn  *net.UDPConn
 	frontendConn *net.UDPConn
 	sendChan     chan []byte
-	lastActive   time.Time
+	lastActive   atomic.Int64 // UnixNano; updated without holding mu
 	mu           sync.Mutex
 	done         chan struct{}
 	log          logr.Logger
@@ -55,7 +56,8 @@ func udpConnStr(clientAddr net.Addr, conn *net.UDPConn) string {
 }
 
 func (s *ClientSession) String() string {
-	return fmt.Sprintf("frontend %s backend %s age %.2fs", udpConnStr(s.clientAddr, s.frontendConn), udpConnStr(nil, s.backendConn), time.Now().Sub(s.lastActive).Seconds())
+	age := time.Since(time.Unix(0, s.lastActive.Load()))
+	return fmt.Sprintf("frontend %s backend %s age %.2fs", udpConnStr(s.clientAddr, s.frontendConn), udpConnStr(nil, s.backendConn), age.Seconds())
 }
 
 // SessionManager maps client addresses to active upstream sessions
@@ -120,13 +122,13 @@ func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
 		backendConn:  backendConn,
 		frontendConn: sm.frontend,
 		sendChan:     make(chan []byte, sessionChanCapacity),
-		lastActive:   time.Now(),
 		done:         make(chan struct{}),
 		log:          sm.log,
 		writeHooks:   sm.writeHooks,
 		readHooks:    sm.readHooks,
 		metaData:     make(map[string]string),
 	}
+	session.lastActive.Store(time.Now().UnixNano())
 
 	sm.sessions[key] = session
 
@@ -157,15 +159,14 @@ func (sm *SessionManager) remove(key string) {
 func (sm *SessionManager) cleanupRoutine() {
 	ticker := time.NewTicker(sessionCleanupInterval)
 	for range ticker.C {
-		now := time.Now()
+		now := time.Now().UnixNano()
+		timeout := sessionTimeout.Nanoseconds()
 		sm.mu.RLock()
 		var expiredKeys []string
 		for key, session := range sm.sessions {
-			session.mu.Lock()
-			if now.Sub(session.lastActive) > sessionTimeout {
+			if now-session.lastActive.Load() > timeout {
 				expiredKeys = append(expiredKeys, key)
 			}
-			session.mu.Unlock()
 		}
 		sm.mu.RUnlock()
 
@@ -176,9 +177,7 @@ func (sm *SessionManager) cleanupRoutine() {
 }
 
 func (s *ClientSession) refresh() {
-	s.mu.Lock()
-	s.lastActive = time.Now()
-	s.mu.Unlock()
+	s.lastActive.Store(time.Now().UnixNano())
 }
 
 // Full Duplex Loop 1: Proxy -> Backend (Client outbound traffic)

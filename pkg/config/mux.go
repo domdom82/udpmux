@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"maps"
+	"sync"
 
 	"github.com/domdom82/udpmux/pkg/frame"
 )
@@ -11,6 +12,7 @@ type UdpMuxConfig struct {
 	ListenAddr    string // The ip:port the udp proxy will listen on for UDP traffic
 	ApiListenAddr string // The ip:port the udp proxy will listen on for API traffic
 	Protocol      string // The protocol version to use
+	mu            sync.RWMutex
 	endpoints     map[frame.EndpointId]string
 	endpointIds   map[string]frame.EndpointId
 }
@@ -28,12 +30,16 @@ func NewUdpMuxConfig(listenAddr string, apiListenAddr string, protocol string) *
 }
 
 func (cfg *UdpMuxConfig) ListEndpointMappings() map[frame.EndpointId]string {
+	cfg.mu.RLock()
+	defer cfg.mu.RUnlock()
 	mappings := make(map[frame.EndpointId]string)
 	maps.Copy(mappings, cfg.endpoints)
 	return mappings
 }
 
 func (cfg *UdpMuxConfig) GetEndpointId(addr string) (frame.EndpointId, error) {
+	cfg.mu.RLock()
+	defer cfg.mu.RUnlock()
 	id, found := cfg.endpointIds[addr]
 	if !found {
 		return 0, fmt.Errorf("unknown endpoint '%s'", addr)
@@ -42,6 +48,8 @@ func (cfg *UdpMuxConfig) GetEndpointId(addr string) (frame.EndpointId, error) {
 }
 
 func (cfg *UdpMuxConfig) GetEndpoint(id frame.EndpointId) (string, error) {
+	cfg.mu.RLock()
+	defer cfg.mu.RUnlock()
 	addr, found := cfg.endpoints[id]
 	if !found {
 		return "", fmt.Errorf("unknown endpoint id '%d'", id)
@@ -50,6 +58,8 @@ func (cfg *UdpMuxConfig) GetEndpoint(id frame.EndpointId) (string, error) {
 }
 
 func (cfg *UdpMuxConfig) RegisterEndpoint(addr string) frame.EndpointId {
+	cfg.mu.Lock()
+	defer cfg.mu.Unlock()
 	id := EndpointToId(addr)
 	cfg.endpoints[id] = addr
 	cfg.endpointIds[addr] = id
@@ -57,8 +67,11 @@ func (cfg *UdpMuxConfig) RegisterEndpoint(addr string) frame.EndpointId {
 }
 
 func (cfg *UdpMuxConfig) UnregisterEndpoint(addr string) error {
-	if _, err := cfg.GetEndpointId(addr); err != nil {
-		return err
+	cfg.mu.Lock()
+	defer cfg.mu.Unlock()
+	// inline the lookup to avoid lock re-entry
+	if _, found := cfg.endpointIds[addr]; !found {
+		return fmt.Errorf("unknown endpoint '%s'", addr)
 	}
 	id := EndpointToId(addr)
 	delete(cfg.endpoints, id)
@@ -67,6 +80,8 @@ func (cfg *UdpMuxConfig) UnregisterEndpoint(addr string) error {
 }
 
 func (cfg *UdpMuxConfig) NumEndpoints() int {
+	cfg.mu.RLock()
+	defer cfg.mu.RUnlock()
 	return len(cfg.endpoints)
 }
 

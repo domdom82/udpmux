@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -138,6 +140,42 @@ var _ = Describe("UdpMuxConfig", func() {
 		It("fails with invalid listen address", func() {
 			cfg = config.NewUdpMuxConfig("not-an-addr", ":8081", config.ProtocolV2)
 			Expect(cfg.Validate()).To(HaveOccurred())
+		})
+	})
+
+	Describe("concurrent access", func() {
+		It("allows concurrent reads and writes without data races", func() {
+			endpoints := []string{
+				"10.0.0.1:1194", "10.0.0.2:1194", "10.0.0.3:1194",
+				"10.0.0.4:1194", "10.0.0.5:1194",
+			}
+			for _, ep := range endpoints {
+				cfg.RegisterEndpoint(ep)
+			}
+
+			const goroutines = 10
+			var wg sync.WaitGroup
+			wg.Add(goroutines * 2)
+
+			for i := range goroutines {
+				go func(i int) {
+					defer wg.Done()
+					addr := fmt.Sprintf("10.1.0.%d:1194", i)
+					cfg.RegisterEndpoint(addr)
+					_ = cfg.UnregisterEndpoint(addr)
+				}(i)
+				go func(i int) {
+					defer wg.Done()
+					ep := endpoints[i%len(endpoints)]
+					id := config.EndpointToId(ep)
+					_, _ = cfg.GetEndpoint(id)
+					_, _ = cfg.GetEndpointId(ep)
+					_ = cfg.NumEndpoints()
+					_ = cfg.ListEndpointMappings()
+				}(i)
+			}
+
+			wg.Wait()
 		})
 	})
 })

@@ -36,7 +36,7 @@ docker-images: udp-proxy-docker-image udp-mux-docker-image
 
 .PHONY: test
 test:
-	go test ./...
+	go test -race ./...
 
 .PHONY: check
 check:

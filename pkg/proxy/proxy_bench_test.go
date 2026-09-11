@@ -47,23 +47,22 @@ func startBenchProxy(b *testing.B, backendAddr string, writeHooks, readHooks []H
 
 func BenchmarkGetWorkerIndex_CacheHit(b *testing.B) {
 	p := &Proxy{workers: 8, addrToWorker: make(map[string]int)}
-	addr := &net.UDPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 5000}
-	_ = p.getWorkerIndex(addr) // warm cache
+	key := (&net.UDPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 5000}).String()
+	_ = p.getWorkerIndex(key) // warm cache
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = p.getWorkerIndex(addr)
+		_ = p.getWorkerIndex(key)
 	}
 }
 
 func BenchmarkGetWorkerIndex_CacheMiss(b *testing.B) {
-	// A fresh proxy with a large pre-populated map to reflect real working-set pressure.
 	p := &Proxy{workers: 8, addrToWorker: make(map[string]int)}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
-		addr := &net.UDPAddr{IP: net.IPv4(10, 0, byte(i>>8), byte(i)), Port: 5000 + i%1000}
-		_ = p.getWorkerIndex(addr)
+		key := (&net.UDPAddr{IP: net.IPv4(10, 0, byte(i>>8), byte(i)), Port: 5000 + i%1000}).String()
+		_ = p.getWorkerIndex(key)
 	}
 }
 
@@ -137,6 +136,7 @@ func BenchmarkProxyThroughput_NoHooks(b *testing.B) {
 	}
 
 	b.StopTimer()
+	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "pkt/s")
 	<-drain
 }
 
@@ -186,6 +186,7 @@ func BenchmarkProxyThroughput_WithHooks(b *testing.B) {
 	}
 
 	b.StopTimer()
+	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "pkt/s")
 	<-drain
 }
 

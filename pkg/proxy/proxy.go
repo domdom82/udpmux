@@ -19,8 +19,9 @@ const (
 )
 
 type Packet struct {
-	Addr net.Addr
-	Data []byte
+	Addr    net.Addr
+	AddrKey string // computed only once in the read loop, shared in worker and session manager for performance
+	Data    []byte
 }
 
 type Proxy struct {
@@ -131,9 +132,10 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 			copy(data, ms[i].Buffers[0][:msgLen])
 
 			// Map client address to a fixed worker to preserve per-client packet order.
-			idx := p.getWorkerIndex(ms[i].Addr)
+			key := ms[i].Addr.String()
+			idx := p.getWorkerIndex(key)
 			select {
-			case workerChans[idx] <- Packet{Addr: ms[i].Addr, Data: data}:
+			case workerChans[idx] <- Packet{Addr: ms[i].Addr, AddrKey: key, Data: data}:
 			default:
 				log.Info("worker queue full, dropping packet", "addr", ms[i].Addr)
 			}
@@ -149,8 +151,7 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 }
 
 // Map client address to a worker
-func (p *Proxy) getWorkerIndex(addr net.Addr) int {
-	key := addr.String()
+func (p *Proxy) getWorkerIndex(key string) int {
 	if idx, ok := p.addrToWorker[key]; ok {
 		return idx
 	}
@@ -166,13 +167,12 @@ func worker(log logr.Logger, ch <-chan Packet, sm *SessionManager, wg *sync.Wait
 	defer wg.Done()
 
 	for pkt := range ch {
-		session := sm.getOrCreate(pkt.Addr)
+		session := sm.getOrCreate(pkt.AddrKey, pkt.Addr)
 		if session != nil {
 			select {
 			case session.sendChan <- pkt.Data:
 			default:
-				// Buffer full fallback to prevent blocking worker pool
-				log.Info("Session queue full for %s, dropping packet", pkt.Addr)
+				log.Info("Session queue full, dropping packet", "addr", pkt.AddrKey)
 			}
 		}
 	}

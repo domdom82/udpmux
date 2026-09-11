@@ -85,9 +85,7 @@ func newSessionManager(log logr.Logger, backend *net.UDPAddr, frontend *net.UDPC
 	return sm
 }
 
-func (sm *SessionManager) getOrCreate(clientAddr net.Addr) *ClientSession {
-	key := clientAddr.String()
-
+func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSession {
 	// Fast path: Return session if it exists.
 	sm.mu.RLock()
 	session, exists := sm.sessions[key]

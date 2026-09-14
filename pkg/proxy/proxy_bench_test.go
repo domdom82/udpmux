@@ -186,7 +186,11 @@ func BenchmarkProxyThroughput_WithHooks(b *testing.B) {
 	}
 
 	b.StopTimer()
-	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "pkt/s")
+	pkts := float64(b.N) / b.Elapsed().Seconds()
+	b.ReportMetric(pkts, "pkt/s")
+	if pkts < 50000 {
+		b.Errorf("low throughput, only %.0f pkt/s", pkts)
+	}
 	<-drain
 }
 

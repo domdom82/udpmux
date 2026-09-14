@@ -35,8 +35,12 @@ udp-mux-docker-image:
 docker-images: udp-proxy-docker-image udp-mux-docker-image
 
 .PHONY: test
-test:
+test: bench
 	go test -race ./...
+
+.PHONY: bench
+bench:
+	go test -bench=. -run=xxx ./...
 
 .PHONY: check
 check:

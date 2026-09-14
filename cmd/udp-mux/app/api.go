@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io"
 	"net/http"
 	"strings"
 
@@ -9,11 +10,12 @@ import (
 )
 
 const (
-	msgError        = "internal server error"
-	msgNotFound     = "endpoint not found"
-	msgRegistered   = "endpoint registered"
-	msgUnregistered = "endpoint unregistered"
-	msgNotAllowed   = "method not allowed"
+	msgError          = "internal server error"
+	msgNotFound       = "endpoint not found"
+	msgRegistered     = "endpoint registered"
+	msgUnregistered   = "endpoint unregistered"
+	msgNotAllowed     = "method not allowed"
+	msgBulkRegistered = "endpoints registered"
 )
 
 func addApi(log logr.Logger, cfg *config.UdpMuxConfig, mux *http.ServeMux) {
@@ -58,6 +60,31 @@ func addApi(log logr.Logger, cfg *config.UdpMuxConfig, mux *http.ServeMux) {
 		w.Write([]byte(response))
 	})
 
+	// PUT /api/endpoints/bulk atomically registers all endpoints in the body.
+	// Body: newline-separated list of host:port strings.
+	mux.HandleFunc("/api/endpoints/bulk", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Write([]byte(msgNotAllowed))
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(msgError))
+			return
+		}
+		var addrs []string
+		for line := range strings.SplitSeq(string(body), "\n") {
+			if addr := strings.TrimSpace(line); addr != "" {
+				addrs = append(addrs, addr)
+			}
+		}
+		log.Info("registering endpoints in bulk", "count", len(addrs))
+		cfg.RegisterEndpoints(addrs)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(msgBulkRegistered))
+	})
 }
 
 func listEndpoints(cfg *config.UdpMuxConfig) string {

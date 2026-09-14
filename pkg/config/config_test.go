@@ -122,6 +122,33 @@ var _ = Describe("UdpMuxConfig", func() {
 		})
 	})
 
+	Describe("RegisterEndpoints", func() {
+		It("registers all endpoints in the list", func() {
+			cfg.RegisterEndpoints([]string{"a:1", "b:2", "c:3"})
+			Expect(cfg.NumEndpoints()).To(Equal(3))
+			_, err := cfg.GetEndpointId("a:1")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = cfg.GetEndpointId("b:2")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = cfg.GetEndpointId("c:3")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("adds to existing endpoints — previous entries are kept", func() {
+			cfg.RegisterEndpoint("existing:1")
+			cfg.RegisterEndpoints([]string{"new:1", "new:2"})
+			Expect(cfg.NumEndpoints()).To(Equal(3))
+			_, err := cfg.GetEndpointId("existing:1")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("is a no-op for an empty list", func() {
+			cfg.RegisterEndpoint("a:1")
+			cfg.RegisterEndpoints([]string{})
+			Expect(cfg.NumEndpoints()).To(Equal(1))
+		})
+	})
+
 	Describe("Validate", func() {
 		It("passes with valid addresses", func() {
 			Expect(cfg.Validate()).To(Succeed())

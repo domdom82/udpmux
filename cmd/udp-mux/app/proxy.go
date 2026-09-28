@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"runtime"
 
 	"github.com/domdom82/udpmux/pkg/config"
 	"github.com/domdom82/udpmux/pkg/frame"
@@ -12,8 +11,7 @@ import (
 	"github.com/go-logr/logr"
 )
 
-func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
-	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0))
+func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig, p *proxy.Proxy) error {
 
 	var unwrap = proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
 		var (

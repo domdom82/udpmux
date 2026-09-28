@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/domdom82/udpmux/pkg/config"
+	"github.com/domdom82/udpmux/pkg/proxy"
 )
 
 func TestApp(t *testing.T) {
@@ -20,12 +22,13 @@ func TestApp(t *testing.T) {
 
 // newTestServer wires up the full HTTP mux (health, readiness, metrics, api)
 // and returns a test server along with the config it shares.
-func newTestServer(cfg *config.UdpMuxConfig) *httptest.Server {
+// Pass nil for p when the test does not exercise the proxy session count.
+func newTestServer(cfg *config.UdpMuxConfig, p *proxy.Proxy) *httptest.Server {
 	mux := http.NewServeMux()
 	addHealth(logr.Discard(), cfg, mux)
 	addReadiness(logr.Discard(), cfg, mux)
 	addMetrics(logr.Discard(), cfg, mux)
-	addApi(logr.Discard(), cfg, mux)
+	addApi(logr.Discard(), cfg, p, mux)
 	return httptest.NewServer(mux)
 }
 
@@ -37,7 +40,7 @@ var _ = Describe("/healthz", func() {
 
 	BeforeEach(func() {
 		cfg = config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV1)
-		srv = newTestServer(cfg)
+		srv = newTestServer(cfg, nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -60,7 +63,7 @@ var _ = Describe("/readyz", func() {
 	Context("with protocol v1", func() {
 		BeforeEach(func() {
 			cfg = config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV1)
-			srv = newTestServer(cfg)
+			srv = newTestServer(cfg, nil)
 		})
 
 		It("returns 200 even without endpoints", func() {
@@ -73,7 +76,7 @@ var _ = Describe("/readyz", func() {
 	Context("with protocol v2 and no endpoints", func() {
 		BeforeEach(func() {
 			cfg = config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV2)
-			srv = newTestServer(cfg)
+			srv = newTestServer(cfg, nil)
 		})
 
 		It("returns 503", func() {
@@ -87,7 +90,7 @@ var _ = Describe("/readyz", func() {
 		BeforeEach(func() {
 			cfg = config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV2)
 			cfg.RegisterEndpoint("10.0.0.1:1194")
-			srv = newTestServer(cfg)
+			srv = newTestServer(cfg, nil)
 		})
 
 		It("returns 200", func() {
@@ -103,7 +106,7 @@ var _ = Describe("/metrics", func() {
 
 	BeforeEach(func() {
 		cfg := config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV1)
-		srv = newTestServer(cfg)
+		srv = newTestServer(cfg, nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -123,7 +126,7 @@ var _ = Describe("/api/endpoints", func() {
 
 	BeforeEach(func() {
 		cfg = config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV2)
-		srv = newTestServer(cfg)
+		srv = newTestServer(cfg, nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -224,7 +227,7 @@ var _ = Describe("/api/endpoints/bulk", func() {
 
 	BeforeEach(func() {
 		cfg = config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV2)
-		srv = newTestServer(cfg)
+		srv = newTestServer(cfg, nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -286,5 +289,34 @@ var _ = Describe("/api/endpoints/bulk", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusMethodNotAllowed))
 		})
+	})
+})
+
+var _ = Describe("/api/sessions", func() {
+	var (
+		cfg *config.UdpMuxConfig
+		srv *httptest.Server
+	)
+
+	BeforeEach(func() {
+		cfg = config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV2)
+		srv = newTestServer(cfg, nil)
+	})
+
+	AfterEach(func() { srv.Close() })
+
+	It("returns 200 with session count 0 when no proxy is active", func() {
+		resp, err := http.Get(srv.URL + "/api/sessions")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		body, _ := io.ReadAll(resp.Body)
+		Expect(string(body)).To(Equal("0"))
+	})
+
+	It("returns 405 for non-GET methods", func() {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/sessions", nil)
+		resp, err := http.DefaultClient.Do(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusMethodNotAllowed))
 	})
 })

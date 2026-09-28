@@ -17,7 +17,7 @@ func BenchmarkAPIRegisterEndpoints_1k(b *testing.B) {
 	body := strings.Join(addrs, "\n")
 
 	cfg := config.NewUdpMuxConfig(":8080", ":8081", config.ProtocolV2)
-	srv := newTestServer(cfg)
+	srv := newTestServer(cfg, nil)
 	defer srv.Close()
 
 	b.ResetTimer()

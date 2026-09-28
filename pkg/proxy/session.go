@@ -154,6 +154,12 @@ func (sm *SessionManager) remove(key string) {
 	}
 }
 
+func (sm *SessionManager) NumSessions() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.sessions)
+}
+
 func (sm *SessionManager) cleanupRoutine() {
 	ticker := time.NewTicker(sessionCleanupInterval)
 	for range ticker.C {

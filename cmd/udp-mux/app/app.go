@@ -5,6 +5,7 @@ import (
 	"runtime"
 
 	"github.com/domdom82/udpmux/pkg/config"
+	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/domdom82/udpmux/pkg/utils"
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
@@ -54,9 +55,11 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
 		return err
 	}
 
+	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0))
+
 	wg := errgroup.Group{}
-	wg.Go(func() error { return runProxy(ctx, log, cfg) })
-	wg.Go(func() error { return runHTTPServer(ctx, log, cfg) })
+	wg.Go(func() error { return runProxy(ctx, log, cfg, p) })
+	wg.Go(func() error { return runHTTPServer(ctx, log, cfg, p) })
 
 	return wg.Wait()
 }

@@ -1,11 +1,13 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/domdom82/udpmux/pkg/config"
+	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/go-logr/logr"
 )
 
@@ -18,7 +20,7 @@ const (
 	msgBulkRegistered = "endpoints registered"
 )
 
-func addApi(log logr.Logger, cfg *config.UdpMuxConfig, mux *http.ServeMux) {
+func addApi(log logr.Logger, cfg *config.UdpMuxConfig, p *proxy.Proxy, mux *http.ServeMux) {
 	mux.HandleFunc("/api/endpoints", func(w http.ResponseWriter, r *http.Request) {
 		endpoint := r.FormValue("endpoint")
 		response := msgError
@@ -84,6 +86,16 @@ func addApi(log logr.Logger, cfg *config.UdpMuxConfig, mux *http.ServeMux) {
 		cfg.RegisterEndpoints(addrs)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(msgBulkRegistered))
+	})
+
+	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Write([]byte(msgNotAllowed))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "%d", p.NumSessions())
 	})
 }
 

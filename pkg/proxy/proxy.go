@@ -31,6 +31,7 @@ type Proxy struct {
 	addrToWorker map[string]int
 	writeHooks   []Hook
 	readHooks    []Hook
+	sessionMgr   *SessionManager
 }
 
 func NewProxy(localAddr string, backendAddr string, workers int) *Proxy {
@@ -50,6 +51,15 @@ func (p *Proxy) AddWriteHook(hook Hook) {
 
 func (p *Proxy) AddReadHook(hook Hook) {
 	p.readHooks = append(p.readHooks, hook)
+}
+
+// NumSessions returns the number of currently active client sessions.
+// Returns 0 if the proxy has not started yet.
+func (p *Proxy) NumSessions() int {
+	if p == nil || p.sessionMgr == nil {
+		return 0
+	}
+	return p.sessionMgr.NumSessions()
 }
 
 func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
@@ -89,6 +99,7 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 		workerChans[i] = make(chan Packet, workerChanCapacity)
 	}
 	sessionMgr := newSessionManager(log, backendAddr, frontendConn, p.writeHooks, p.readHooks)
+	p.sessionMgr = sessionMgr
 
 	var wg sync.WaitGroup
 	for i := 0; i < p.workers; i++ {

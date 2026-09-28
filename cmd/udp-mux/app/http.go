@@ -7,15 +7,16 @@ import (
 	_ "net/http/pprof" // registers /debug/pprof/* handlers on http.DefaultServeMux
 
 	"github.com/domdom82/udpmux/pkg/config"
+	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/go-logr/logr"
 )
 
-func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
+func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig, p *proxy.Proxy) error {
 	mux := http.NewServeMux()
 	addHealth(log, cfg, mux)
 	addReadiness(log, cfg, mux)
 	addMetrics(log, cfg, mux)
-	addApi(log, cfg, mux)
+	addApi(log, cfg, p, mux)
 
 	// pprof: forward /debug/pprof/* to the default mux where the import above registered them.
 	mux.Handle("/debug/pprof/", http.DefaultServeMux)

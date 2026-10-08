@@ -1,0 +1,210 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" width="900" height="560" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+    <linearGradient id="clientGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#334155"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+    <linearGradient id="proxyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1d4ed8"/>
+      <stop offset="100%" style="stop-color:#1e40af"/>
+    </linearGradient>
+    <linearGradient id="lbGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#7c3aed"/>
+      <stop offset="100%" style="stop-color:#6d28d9"/>
+    </linearGradient>
+    <linearGradient id="muxGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f766e"/>
+      <stop offset="100%" style="stop-color:#0d6860"/>
+    </linearGradient>
+    <linearGradient id="endpointGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#b45309"/>
+      <stop offset="100%" style="stop-color:#92400e"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+    <filter id="glowBlue">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrowBlue1" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrowBlue2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#818cf8"/>
+    </marker>
+    <marker id="arrowGreen1" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#34d399"/>
+    </marker>
+    <marker id="arrowGreen2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#6ee7b7"/>
+    </marker>
+    <marker id="arrowAmber1" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="arrowAmber2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#fcd34d"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="560" fill="url(#bgGrad)" rx="12"/>
+
+  <!-- Title -->
+  <text x="450" y="38" text-anchor="middle" fill="#f1f5f9" font-size="18" font-weight="700" letter-spacing="0.5">udpmux — Architecture</text>
+  <text x="450" y="58" text-anchor="middle" fill="#94a3b8" font-size="12">Multiple UDP flows multiplexed over a single shared port</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- MACHINE A (top row) -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <!-- Machine A box -->
+  <rect x="28" y="90" width="120" height="64" rx="8" fill="url(#clientGrad)" stroke="#475569" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="88" y="114" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600" letter-spacing="0.8">MACHINE A</text>
+  <text x="88" y="130" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Client</text>
+  <text x="88" y="146" text-anchor="middle" fill="#64748b" font-size="10">plain UDP</text>
+
+  <!-- UDP Proxy A box -->
+  <rect x="196" y="90" width="130" height="64" rx="8" fill="url(#proxyGrad)" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="261" y="110" text-anchor="middle" fill="#bfdbfe" font-size="10" font-weight="600" letter-spacing="0.8">UDP PROXY A</text>
+  <text x="261" y="127" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">udp-proxy</text>
+  <text x="261" y="143" text-anchor="middle" fill="#93c5fd" font-size="10">:7070  →  framed</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- MACHINE B (bottom row) -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <!-- Machine B box -->
+  <rect x="28" y="390" width="120" height="64" rx="8" fill="url(#clientGrad)" stroke="#475569" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="88" y="414" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600" letter-spacing="0.8">MACHINE B</text>
+  <text x="88" y="430" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Client</text>
+  <text x="88" y="446" text-anchor="middle" fill="#64748b" font-size="10">plain UDP</text>
+
+  <!-- UDP Proxy B box -->
+  <rect x="196" y="390" width="130" height="64" rx="8" fill="url(#proxyGrad)" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="261" y="410" text-anchor="middle" fill="#bfdbfe" font-size="10" font-weight="600" letter-spacing="0.8">UDP PROXY B</text>
+  <text x="261" y="427" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">udp-proxy</text>
+  <text x="261" y="443" text-anchor="middle" fill="#93c5fd" font-size="10">:7070  →  framed</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- LOAD BALANCER (center) -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <rect x="378" y="220" width="130" height="104" rx="8" fill="url(#lbGrad)" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="443" y="244" text-anchor="middle" fill="#ddd6fe" font-size="10" font-weight="600" letter-spacing="0.8">LOAD BALANCER</text>
+  <text x="443" y="261" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">public IP</text>
+  <text x="443" y="280" text-anchor="middle" fill="#c4b5fd" font-size="13" font-weight="800">:8080</text>
+  <text x="443" y="298" text-anchor="middle" fill="#a78bfa" font-size="10">single shared port</text>
+  <text x="443" y="314" text-anchor="middle" fill="#7c3aed" font-size="10">──────────────</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- UDP MUX (right center) -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <rect x="566" y="220" width="140" height="104" rx="8" fill="url(#muxGrad)" stroke="#14b8a6" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="636" y="244" text-anchor="middle" fill="#99f6e4" font-size="10" font-weight="600" letter-spacing="0.8">UDP MUX</text>
+  <text x="636" y="261" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">udp-mux</text>
+  <text x="636" y="280" text-anchor="middle" fill="#5eead4" font-size="13" font-weight="800">:8080</text>
+  <text x="636" y="298" text-anchor="middle" fill="#2dd4bf" font-size="10">decodes UDPM frames</text>
+  <text x="636" y="314" text-anchor="middle" fill="#2dd4bf" font-size="10">dispatches by endpoint</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- ENDPOINTS (far right) -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <!-- Endpoint 1 -->
+  <rect x="766" y="130" width="116" height="64" rx="8" fill="url(#endpointGrad)" stroke="#d97706" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="824" y="152" text-anchor="middle" fill="#fde68a" font-size="10" font-weight="600" letter-spacing="0.8">ENDPOINT 1</text>
+  <text x="824" y="169" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">backend-a</text>
+  <text x="824" y="185" text-anchor="middle" fill="#fcd34d" font-size="10">:1194 (VPN A)</text>
+
+  <!-- Endpoint 2 -->
+  <rect x="766" y="350" width="116" height="64" rx="8" fill="url(#endpointGrad)" stroke="#d97706" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="824" y="372" text-anchor="middle" fill="#fde68a" font-size="10" font-weight="600" letter-spacing="0.8">ENDPOINT 2</text>
+  <text x="824" y="389" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">backend-b</text>
+  <text x="824" y="405" text-anchor="middle" fill="#fcd34d" font-size="10">:1195 (VPN B)</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FLOW ARROWS — Machine A (top path, blue) -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <!-- Client A → Proxy A: plain UDP -->
+  <line x1="149" y1="122" x2="193" y2="122" stroke="#60a5fa" stroke-width="2" marker-end="url(#arrowBlue1)" stroke-dasharray="5,3"/>
+
+  <!-- Proxy A → Load Balancer: framed UDP (angled down) -->
+  <path d="M327,122 C360,122 360,250 376,260" stroke="#60a5fa" stroke-width="2" fill="none" marker-end="url(#arrowBlue1)" stroke-dasharray="5,3"/>
+
+  <!-- Load Balancer → UDP Mux -->
+  <line x1="509" y1="272" x2="563" y2="272" stroke="#a78bfa" stroke-width="2.5" marker-end="url(#arrowBlue2)"/>
+
+  <!-- UDP Mux → Endpoint 1 (angled up) -->
+  <path d="M706,252 C740,252 740,195 764,180" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrowGreen1)"/>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FLOW ARROWS — Machine B (bottom path, indigo) -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <!-- Client B → Proxy B: plain UDP -->
+  <line x1="149" y1="422" x2="193" y2="422" stroke="#818cf8" stroke-width="2" marker-end="url(#arrowBlue2)" stroke-dasharray="5,3"/>
+
+  <!-- Proxy B → Load Balancer: framed UDP (angled up) -->
+  <path d="M327,422 C360,422 360,295 376,285" stroke="#818cf8" stroke-width="2" fill="none" marker-end="url(#arrowBlue2)" stroke-dasharray="5,3"/>
+
+  <!-- UDP Mux → Endpoint 2 (angled down) -->
+  <path d="M706,292 C740,292 740,360 764,365" stroke="#6ee7b7" stroke-width="2" fill="none" marker-end="url(#arrowGreen2)"/>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- LEGEND LABELS on arrows -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <!-- "plain UDP" label - top -->
+  <rect x="148" y="104" width="46" height="14" rx="3" fill="#0f172a" opacity="0.8"/>
+  <text x="171" y="115" text-anchor="middle" fill="#60a5fa" font-size="9" font-weight="600">plain UDP</text>
+
+  <!-- "plain UDP" label - bottom -->
+  <rect x="148" y="404" width="46" height="14" rx="3" fill="#0f172a" opacity="0.8"/>
+  <text x="171" y="415" text-anchor="middle" fill="#818cf8" font-size="9" font-weight="600">plain UDP</text>
+
+  <!-- "UDPM framed" label - top arc -->
+  <rect x="326" y="164" width="60" height="14" rx="3" fill="#0f172a" opacity="0.8"/>
+  <text x="356" y="175" text-anchor="middle" fill="#60a5fa" font-size="9" font-weight="600">UDPM framed</text>
+
+  <!-- "UDPM framed" label - bottom arc -->
+  <rect x="326" y="360" width="60" height="14" rx="3" fill="#0f172a" opacity="0.8"/>
+  <text x="356" y="371" text-anchor="middle" fill="#818cf8" font-size="9" font-weight="600">UDPM framed</text>
+
+  <!-- "both flows :8080" label on LB→Mux -->
+  <rect x="508" y="256" width="56" height="14" rx="3" fill="#0f172a" opacity="0.8"/>
+  <text x="536" y="267" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">both flows</text>
+
+  <!-- "flow A" label -->
+  <rect x="726" y="218" width="36" height="14" rx="3" fill="#0f172a" opacity="0.8"/>
+  <text x="744" y="229" text-anchor="middle" fill="#34d399" font-size="9" font-weight="600">flow A</text>
+
+  <!-- "flow B" label -->
+  <rect x="726" y="312" width="36" height="14" rx="3" fill="#0f172a" opacity="0.8"/>
+  <text x="744" y="323" text-anchor="middle" fill="#6ee7b7" font-size="9" font-weight="600">flow B</text>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FRAME FORMAT callout -->
+  <!-- ═══════════════════════════════════════════════ -->
+
+  <rect x="28" y="490" width="844" height="52" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="450" y="510" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="700" letter-spacing="0.5">UDPM FRAME FORMAT</text>
+  <text x="200" y="530" text-anchor="middle" fill="#7dd3fc" font-size="10" font-weight="600">V1 (266-byte header)</text>
+  <text x="200" y="530" text-anchor="middle" fill="#7dd3fc" font-size="10" font-weight="600"> </text>
+  <text x="370" y="530" text-anchor="middle" fill="#64748b" font-size="10">magic 0x5544504D  +  host:port string (≤256 B)</text>
+  <text x="660" y="530" text-anchor="middle" fill="#86efac" font-size="10" font-weight="600">V2 (17-byte header)</text>
+  <text x="820" y="530" text-anchor="middle" fill="#64748b" font-size="10">magic  +  FNV-64a hash</text>
+
+  <!-- divider -->
+  <line x1="450" y1="495" x2="450" y2="535" stroke="#334155" stroke-width="1"/>
+  <line x1="28" y1="516" x2="872" y2="516" stroke="#334155" stroke-width="1"/>
+</svg>

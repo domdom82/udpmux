@@ -14,9 +14,9 @@ import (
 func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig, p *proxy.Proxy) error {
 	mux := http.NewServeMux()
 	addHealth(log, cfg, mux)
-	addReadiness(log, cfg, mux)
+	addReadiness(log, mux)
 	addMetrics(log, cfg, mux)
-	addApi(log, cfg, p, mux)
+	addApi(log, p, mux)
 
 	// pprof: forward /debug/pprof/* to the default mux where the import above registered them.
 	mux.Handle("/debug/pprof/", http.DefaultServeMux)

@@ -2,28 +2,21 @@ package config
 
 import (
 	"fmt"
-	"hash/fnv"
-
-	"github.com/domdom82/udpmux/pkg/frame"
+	"time"
 )
 
 type UdpProxyConfig struct {
-	ListenAddr   string // The ip:port the udp proxy will listen on.
-	MuxAddr      string // The ip:port the udp proxy will forward to.
-	EndpointAddr string // The ip:port the udp mux will forward to.
-	Protocol     string // The protocol version to use
-	Ping         bool   // If set, the udp proxy will send a ping to the endpoint with PingSize bytes of data sent.
-	PingSize     int    // The size of the ping payload to send. Only used if Ping is set.
-}
-
-func EndpointToId(endpoint string) frame.EndpointId {
-	h := fnv.New64a()
-	h.Write([]byte(endpoint))
-	return frame.EndpointId(h.Sum64())
+	ListenAddr        string        // The ip:port the udp proxy will listen on.
+	MuxAddr           string        // The ip:port the udp proxy will forward to.
+	EndpointAddr      string        // The ip:port the udp mux will forward to.
+	Ping              bool          // If set, send pings to the mux to check network connectivity.
+	PingSize          int           // Optional padding size for ping frames.
+	SessionTimeout    time.Duration // How long an idle session lives before being garbage-collected.
+	KeepaliveIdle     time.Duration // Inactivity duration before the first KEEPALIVE is sent.
+	KeepaliveInterval time.Duration // Interval between subsequent KEEPALIVE packets while still idle.
 }
 
 func (cfg *UdpProxyConfig) Validate() error {
-
 	if err := validateAddr(cfg.ListenAddr, "listen address"); err != nil {
 		return err
 	}
@@ -32,23 +25,25 @@ func (cfg *UdpProxyConfig) Validate() error {
 		return err
 	}
 
-	if err := validateAddr(cfg.MuxAddr, "endpoint address"); err != nil {
+	if err := validateAddr(cfg.EndpointAddr, "endpoint address"); err != nil {
 		return err
 	}
 
-	if cfg.Protocol == "" {
-		return fmt.Errorf("protocol is required")
+	if cfg.SessionTimeout <= 0 {
+		return fmt.Errorf("session_timeout must be positive")
 	}
-	switch cfg.Protocol {
-	case ProtocolV1, ProtocolV2:
-	default:
-		return fmt.Errorf("invalid protocol '%s'", cfg.Protocol)
+	if cfg.KeepaliveIdle <= 0 {
+		return fmt.Errorf("keepalive_idle must be positive")
+	}
+	if cfg.KeepaliveInterval <= 0 {
+		return fmt.Errorf("keepalive_interval must be positive")
+	}
+	if cfg.KeepaliveIdle >= cfg.SessionTimeout {
+		return fmt.Errorf("keepalive_idle must be less than session_timeout")
 	}
 
-	if cfg.Ping {
-		if cfg.PingSize < 0 {
-			return fmt.Errorf("ping size must be non-negative")
-		}
+	if cfg.Ping && cfg.PingSize < 0 {
+		return fmt.Errorf("ping size must be non-negative")
 	}
 
 	return nil

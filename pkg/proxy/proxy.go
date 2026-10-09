@@ -6,6 +6,8 @@ import (
 	"hash/fnv"
 	"net"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-logr/logr"
 	"golang.org/x/net/ipv4"
@@ -25,21 +27,25 @@ type Packet struct {
 }
 
 type Proxy struct {
-	localAddr    string
-	backendAddr  string
-	workers      int
-	addrToWorker map[string]int
-	writeHooks   []Hook
-	readHooks    []Hook
-	sessionMgr   *SessionManager
+	localAddr       string
+	backendAddr     string
+	resolvedAddr    atomic.Value // stores string; set once after ListenAndServe binds
+	workers         int
+	sessionTimeout  time.Duration
+	cleanupInterval time.Duration
+	addrToWorker    map[string]int
+	writeHooks      []Hook
+	readHooks       []Hook
+	sessionMgr      *SessionManager
 }
 
-func NewProxy(localAddr string, backendAddr string, workers int) *Proxy {
+func NewProxy(localAddr string, backendAddr string, workers int, sessionTimeout time.Duration) *Proxy {
 	p := &Proxy{
-		localAddr:    localAddr,
-		backendAddr:  backendAddr,
-		workers:      workers,
-		addrToWorker: make(map[string]int),
+		localAddr:      localAddr,
+		backendAddr:    backendAddr,
+		workers:        workers,
+		sessionTimeout: sessionTimeout,
+		addrToWorker:   make(map[string]int),
 	}
 
 	return p
@@ -51,6 +57,12 @@ func (p *Proxy) AddWriteHook(hook Hook) {
 
 func (p *Proxy) AddReadHook(hook Hook) {
 	p.readHooks = append(p.readHooks, hook)
+}
+
+// SetSessionCleanupInterval overrides the interval at which idle sessions are scanned for expiry.
+// Must be called before ListenAndServe. Zero restores the default (10s).
+func (p *Proxy) SetSessionCleanupInterval(d time.Duration) {
+	p.cleanupInterval = d
 }
 
 // NumSessions returns the number of currently active client sessions.
@@ -75,6 +87,7 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 		return fmt.Errorf("failed to listen on UDP address '%s' (%w)", p.localAddr, err)
 	}
 	defer frontendConn.Close()
+	p.resolvedAddr.Store(frontendConn.LocalAddr().String())
 
 	// Resolve backend endpoint address if provided
 	var backendAddr *net.UDPAddr
@@ -98,7 +111,7 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 	for i := range p.workers {
 		workerChans[i] = make(chan Packet, workerChanCapacity)
 	}
-	sessionMgr := newSessionManager(log, backendAddr, frontendConn, p.writeHooks, p.readHooks)
+	sessionMgr := newSessionManager(log, backendAddr, frontendConn, p.writeHooks, p.readHooks, p.sessionTimeout, p.cleanupInterval)
 	p.sessionMgr = sessionMgr
 
 	var wg sync.WaitGroup

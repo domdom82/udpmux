@@ -2,133 +2,13 @@ package app
 
 import (
 	"context"
-	"fmt"
-	"net"
 
 	"github.com/domdom82/udpmux/pkg/config"
-	"github.com/domdom82/udpmux/pkg/frame"
 	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/go-logr/logr"
 )
 
 func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig, p *proxy.Proxy) error {
-
-	var unwrap = proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
-		var (
-			headerV2    *frame.HeaderV2
-			headerV1    *frame.HeaderV1
-			err         error
-			endpointStr string
-			endpointId  frame.EndpointId
-			isPing      bool
-		)
-
-		dataLen := len(data)
-
-		switch cfg.Protocol {
-		case config.ProtocolV1:
-			if dataLen < frame.HeaderV1Length {
-				return data, fmt.Errorf("invalid v1 header length: %d", dataLen)
-			}
-			headerV1, err = frame.DecodeV1(data[:frame.HeaderV1Length])
-			if err != nil {
-				return data, fmt.Errorf("failed to decode v1 header: %w", err)
-			}
-			isPing = headerV1.Flags&frame.FlagPing != 0
-			endpointStr = string(headerV1.Endpoint[:headerV1.EndpointLen])
-		case config.ProtocolV2:
-			if dataLen < frame.HeaderV2Length {
-				return data, fmt.Errorf("invalid v2 header length: %d", dataLen)
-			}
-			headerV2, err = frame.DecodeV2(data[:frame.HeaderV2Length])
-			if err != nil {
-				return data, fmt.Errorf("failed to decode v2 header: %w", err)
-			}
-			isPing = headerV2.Flags&frame.FlagPing != 0
-			endpointId = headerV2.EndpointId
-			endpointStr, err = cfg.GetEndpoint(endpointId)
-			if err != nil {
-				return data, err
-			}
-		}
-
-		// Extract the inner frame data based on the protocol version
-		var innerFrame []byte
-		switch {
-		case headerV1 != nil:
-			innerFrame = data[frame.HeaderV1Length : frame.HeaderV1Length+int(headerV1.Length)]
-		case headerV2 != nil:
-			innerFrame = data[frame.HeaderV2Length : frame.HeaderV2Length+int(headerV2.Length)]
-		}
-
-		// Check if this is a ping frame and if we should respond to it
-		if isPing {
-			log.Info("received ping frame", "session", s, "pingBytes", len(innerFrame), "totalBytes", dataLen)
-			_, err = s.GetFrontendConn().WriteTo(data, s.GetClientAddr())
-			s.SetMetaData(proxy.SessionMetaTypeKey, proxy.SessionMetaTypeNoBackend)
-			return nil, err
-		}
-
-		// Check if we need to connect to the backend first
-		if s.GetBackendConn() == nil {
-			backendAddr, err := net.ResolveUDPAddr("udp", endpointStr)
-			if err != nil {
-				return data, fmt.Errorf("invalid backend endpoint '%s': %w", endpointStr, err)
-			}
-			backendConn, err := proxy.DialBackend(backendAddr)
-			if err != nil {
-				return data, fmt.Errorf("failed to dial backend '%s': %w", endpointStr, err)
-			}
-
-			s.SetBackendConn(backendConn)
-			s.SetMetaData(proxy.SessionMetaEndpointKey, endpointStr)
-		}
-
-		return innerFrame, nil
-	})
-
-	p.AddWriteHook(unwrap)
-
-	var wrap = proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
-		var (
-			headerV2    *frame.HeaderV2
-			headerV1    *frame.HeaderV1
-			headerBytes []byte
-			endpointStr string
-			endpointId  frame.EndpointId
-			err         error
-		)
-		endpointStr, err = s.GetMetaData("endpoint")
-		if err != nil {
-			return data, err
-		}
-		switch cfg.Protocol {
-		case config.ProtocolV1:
-			headerV1, err = frame.NewHeaderV1(endpointStr, data)
-			if err != nil {
-				return data, err
-			}
-			headerBytes, err = frame.EncodeV1(headerV1)
-			if err != nil {
-				return data, err
-			}
-		case config.ProtocolV2:
-			endpointId, err = cfg.GetEndpointId(endpointStr)
-			if err != nil {
-				return data, err
-			}
-			headerV2 = frame.NewHeaderV2(endpointId, data)
-			headerBytes, err = frame.EncodeV2(headerV2)
-			if err != nil {
-				return data, err
-			}
-		}
-
-		wrappedFrame := append(headerBytes, data...)
-		return wrappedFrame, nil
-	})
-
-	p.AddReadHook(wrap)
-
+	p.AddWriteHook(buildMuxHooks(cfg, log))
 	return p.ListenAndServe(ctx, log)
 }

@@ -29,7 +29,7 @@ func startBenchProxy(b *testing.B, backendAddr string, writeHooks, readHooks []H
 	tmp, addr := mustBindUDP(b)
 	tmp.Close()
 
-	p := NewProxy(addr.String(), backendAddr, 4)
+	p := NewProxy(addr.String(), backendAddr, 4, 0)
 	for _, h := range writeHooks {
 		p.AddWriteHook(h)
 	}
@@ -136,7 +136,11 @@ func BenchmarkProxyThroughput_NoHooks(b *testing.B) {
 	}
 
 	b.StopTimer()
-	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "pkt/s")
+	pkts := float64(b.N) / b.Elapsed().Seconds()
+	b.ReportMetric(pkts, "pkt/s")
+	if pkts < 70000 {
+		b.Errorf("low throughput, only %.0f pkt/s, required at least 70000 pkt/s", pkts)
+	}
 	<-drain
 }
 
@@ -188,8 +192,8 @@ func BenchmarkProxyThroughput_WithHooks(b *testing.B) {
 	b.StopTimer()
 	pkts := float64(b.N) / b.Elapsed().Seconds()
 	b.ReportMetric(pkts, "pkt/s")
-	if pkts < 50000 {
-		b.Errorf("low throughput, only %.0f pkt/s", pkts)
+	if pkts < 70000 {
+		b.Errorf("low throughput, only %.0f pkt/s, required at least 70000 pkt/s", pkts)
 	}
 	<-drain
 }

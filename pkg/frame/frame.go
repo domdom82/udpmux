@@ -6,80 +6,37 @@ import (
 	"strconv"
 )
 
-// Protocol constants for the outer mux header.
+// Protocol constants for the UDPM framing.
 const (
-	Magic     uint32 = 0x5544504D // "UDPM"
-	VersionV1 uint8  = 1
-	VersionV2 uint8  = 2
+	Magic uint32 = 0x5544504D // "UDPM"
 
-	HeaderV1Length = 266 // 4 + 1 + 2 + 2 + 256 + 1 = 266 bytes
-	HeaderV2Length = 17  // 4 + 1 + 2 + 2 + 8 = 17 bytes
+	HeaderLength = 8 // 4 + 2 + 2 bytes (control frames only; data is raw)
 
-	FlagPing uint16 = 1 << 0 // Ping flag. Respond with a pong frame. Echo payload if present.
+	FlagPing       uint16 = 1 << 0 // Ping: mux echoes the frame back; payload is optional padding.
+	FlagProxyHello uint16 = 1 << 1 // Proxy initiates session handshake; payload carries endpoint string.
+	FlagMuxHello   uint16 = 1 << 2 // Mux acknowledges handshake; no payload.
+	FlagKeepAlive  uint16 = 1 << 3 // Keepalive to prevent session expiry; no payload.
+	FlagReset      uint16 = 1 << 4 // Mux requests re-handshake (unknown session); no payload.
 )
 
-// HeaderV1 is the parsed logical header of an udp mux frame.
-// V1 needs more space but allows arbitrary endpoints beyond the mux.
-type HeaderV1 struct {
-	Magic       uint32    // Must be Magic.
-	Version     uint8     // Must be VersionV1.
-	Flags       uint16    // Frame flags
-	Length      uint16    // Payload length
-	EndpointLen uint8     // Endpoint string length
-	Endpoint    [256]byte // Destination endpoint
+// Header is the fixed-size control frame header.
+// Data packets are forwarded raw with no header at all.
+type Header struct {
+	Magic  uint32 // Must be Magic.
+	Flags  uint16 // Frame flags.
+	Length uint16 // Payload length (0 for most control frames; endpoint string length for PROXY_HELLO).
 }
 
-type EndpointId uint64
-
-func (id EndpointId) String() string {
-	return strconv.FormatUint(uint64(id), 10)
-}
-
-// HeaderV2 is the parsed logical header of an udp mux frame V2.
-// V2 needs less space but requires endpoints be registered at the mux ahead of time.
-type HeaderV2 struct {
-	Magic      uint32     // Must be Magic.
-	Version    uint8      // Must be VersionV2.
-	Flags      uint16     // Frame flags
-	Length     uint16     // Payload length
-	EndpointId EndpointId // Destination endpoint id
-}
-
-func NewHeaderV1(endpoint string, data []byte) (*HeaderV1, error) {
-	if len(endpoint) > 256 {
-		return nil, fmt.Errorf("endpoint too long")
+func NewHeader(flags uint16, payloadLen int) *Header {
+	return &Header{
+		Magic:  Magic,
+		Flags:  flags,
+		Length: uint16(payloadLen),
 	}
-
-	epBytes := make([]byte, 256)
-	copy(epBytes, endpoint)
-
-	h := &HeaderV1{
-		Magic:       Magic,
-		Version:     VersionV1,
-		Flags:       0,
-		Length:      uint16(len(data)),
-		Endpoint:    [256]byte(epBytes),
-		EndpointLen: uint8(len(endpoint)),
-	}
-
-	return h, nil
 }
 
-func NewHeaderV2(endpointId EndpointId, data []byte) *HeaderV2 {
-	h := &HeaderV2{
-		Magic:      Magic,
-		Version:    VersionV2,
-		Flags:      0,
-		Length:     uint16(len(data)),
-		EndpointId: endpointId,
-	}
-
-	return h
-}
-
-func EncodeV1(h *HeaderV1) ([]byte, error) {
-	buf := make([]byte, HeaderV1Length)
-
+func Encode(h *Header) ([]byte, error) {
+	buf := make([]byte, HeaderLength)
 	_, err := binary.Encode(buf, binary.BigEndian, h)
 	if err != nil {
 		return nil, err
@@ -87,8 +44,8 @@ func EncodeV1(h *HeaderV1) ([]byte, error) {
 	return buf, nil
 }
 
-func DecodeV1(buf []byte) (*HeaderV1, error) {
-	h := &HeaderV1{}
+func Decode(buf []byte) (*Header, error) {
+	h := &Header{}
 	_, err := binary.Decode(buf, binary.BigEndian, h)
 	if err != nil {
 		return nil, err
@@ -96,38 +53,6 @@ func DecodeV1(buf []byte) (*HeaderV1, error) {
 
 	if h.Magic != Magic {
 		return nil, fmt.Errorf("bad magic: %s (expected: %s)", strconv.Itoa(int(h.Magic)), strconv.Itoa(int(Magic)))
-	}
-
-	if h.Version != VersionV1 {
-		return nil, fmt.Errorf("bad version: %d (expected: %d)", h.Version, VersionV1)
-	}
-
-	return h, nil
-}
-
-func EncodeV2(h *HeaderV2) ([]byte, error) {
-	buf := make([]byte, HeaderV2Length)
-
-	_, err := binary.Encode(buf, binary.BigEndian, h)
-	if err != nil {
-		return nil, err
-	}
-	return buf, nil
-}
-
-func DecodeV2(buf []byte) (*HeaderV2, error) {
-	h := &HeaderV2{}
-	_, err := binary.Decode(buf, binary.BigEndian, h)
-	if err != nil {
-		return nil, err
-	}
-
-	if h.Magic != Magic {
-		return nil, fmt.Errorf("bad magic: %s (expected: %s)", strconv.Itoa(int(h.Magic)), strconv.Itoa(int(Magic)))
-	}
-
-	if h.Version != VersionV2 {
-		return nil, fmt.Errorf("bad version: %d (expected: %d)", h.Version, VersionV2)
 	}
 
 	return h, nil

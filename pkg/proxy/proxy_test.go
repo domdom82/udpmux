@@ -76,7 +76,7 @@ var _ = Describe("Proxy (end-to-end)", func() {
 	})
 
 	startProxy := func(writeHooks, readHooks []proxy.Hook) {
-		p := proxy.NewProxy(proxyAddr.String(), backendAddr.String(), 2)
+		p := proxy.NewProxy(proxyAddr.String(), backendAddr.String(), 2, 0)
 		for _, h := range writeHooks {
 			p.AddWriteHook(h)
 		}

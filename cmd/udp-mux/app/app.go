@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"runtime"
+	"time"
 
 	"github.com/domdom82/udpmux/pkg/config"
 	"github.com/domdom82/udpmux/pkg/proxy"
@@ -16,9 +17,11 @@ import (
 const Name = "udp-mux"
 
 var (
-	listenAddr    string
-	apiListenAddr string
-	protocol      string
+	listenAddr        string
+	apiListenAddr     string
+	sessionTimeout    time.Duration
+	keepaliveIdle     time.Duration
+	keepaliveInterval time.Duration
 )
 
 // NewCommand creates a new cobra.Command for running udp-mux.
@@ -33,7 +36,7 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			cfg := config.NewUdpMuxConfig(listenAddr, apiListenAddr, protocol)
+			cfg := config.NewUdpMuxConfig(listenAddr, apiListenAddr, sessionTimeout, keepaliveIdle, keepaliveInterval)
 			return run(ctx, log, cfg)
 		},
 	}
@@ -42,7 +45,9 @@ func NewCommand() *cobra.Command {
 	verflag.AddFlags(flags)
 	flags.StringVarP(&listenAddr, "listenAddr", "l", ":8080", "Local address to listen on for UDP traffic")
 	flags.StringVarP(&apiListenAddr, "apiListenAddr", "a", ":8081", "Local address to listen on for API traffic")
-	flags.StringVarP(&protocol, "protocol", "p", "v1", "UDPM Protocol version to use (v1 or v2)")
+	flags.DurationVar(&sessionTimeout, "sessionTimeout", 30*time.Second, "Idle duration before a session is garbage-collected")
+	flags.DurationVar(&keepaliveIdle, "keepaliveIdle", 20*time.Second, "Idle duration before sending KEEPALIVE toward the proxy")
+	flags.DurationVar(&keepaliveInterval, "keepaliveInterval", 10*time.Second, "Interval between subsequent KEEPALIVE packets while idle")
 	return cmd
 }
 
@@ -55,7 +60,7 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
 		return err
 	}
 
-	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0))
+	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0), cfg.SessionTimeout)
 
 	wg := errgroup.Group{}
 	wg.Go(func() error { return runProxy(ctx, log, cfg, p) })

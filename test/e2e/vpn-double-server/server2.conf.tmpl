@@ -1,0 +1,17 @@
+mode server
+tls-server
+topology subnet
+proto udp4
+port 1194
+dev tun0
+tun-mtu ${TUN_MTU}
+server 10.201.0.0 255.255.255.0
+status /var/run/vpn-server2.status 15
+ca /pki/ca.crt
+cert /pki/server2.crt
+key /pki/server2.key
+dh /pki/dh.pem
+tls-auth /pki/ta.key 0
+cipher AES-256-GCM
+keepalive 10 60
+verb 3

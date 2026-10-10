@@ -61,3 +61,16 @@ build-udp-mux:
 	@CGO_ENABLED=0 GOOS=$(OS) GOARCH=$(ARCH) go build -o bin/udp-mux  \
 		-ldflags $(LD_FLAGS)\
 	    ./cmd/udp-mux/main.go
+
+.PHONY: gen-pki
+gen-pki:
+	@bash test/e2e/common/pki/gen-pki.sh
+
+.PHONY: build-test-images
+build-test-images: docker-images
+	@docker buildx build --platform=$(OS)/$(ARCH) -t local/vpn-node:latest -f test/e2e/common/Dockerfile.vpn-node test/e2e/common
+
+.PHONY: test-e2e
+test-e2e: build-test-images gen-pki
+	@bash test/e2e/vpn-single-client/run.sh
+	@bash test/e2e/vpn-double-client/run.sh

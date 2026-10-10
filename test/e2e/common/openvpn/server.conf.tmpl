@@ -1,0 +1,19 @@
+mode server
+tls-server
+topology subnet
+proto udp4
+port 1194
+dev tun0
+tun-mtu ${TUN_MTU}
+server 10.200.0.0 255.255.255.0
+client-to-client
+client-config-dir /etc/openvpn/ccd
+status /var/run/vpn-server.status 15
+ca /pki/ca.crt
+cert /pki/server.crt
+key /pki/server.key
+dh /pki/dh.pem
+tls-auth /pki/ta.key 0
+cipher AES-256-GCM
+keepalive 10 60
+verb 3

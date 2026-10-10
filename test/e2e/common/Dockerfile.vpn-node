@@ -1,0 +1,22 @@
+FROM ubuntu:24.04
+
+# Install OpenVPN 2.7.8 from the official community build repo.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && gpg --keyserver keyserver.ubuntu.com --recv-keys 8E6DA8B4E158C569 \
+    && gpg --export --armor 8E6DA8B4E158C569 > /etc/apt/keyrings/openvpn-repo-public.asc \
+    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/openvpn-repo-public.asc] \
+       http://build.openvpn.net/debian/openvpn/release/2.7 noble main" \
+       > /etc/apt/sources.list.d/openvpn27.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       openvpn=2.7.8-noble1 \
+       iproute2 \
+       iptables \
+       iperf3 \
+       iputils-ping \
+       bc \
+    && rm -rf /var/lib/apt/lists/*

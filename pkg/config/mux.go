@@ -45,3 +45,8 @@ func (cfg *UdpMuxConfig) Validate() error {
 	}
 	return nil
 }
+
+func (cfg *UdpMuxConfig) String() string {
+	return fmt.Sprintf("UdpMuxConfig{ListenAddr: %s, ApiListenAddr: %s, SessionTimeout: %s, KeepaliveIdle: %s, KeepaliveInterval: %s}",
+		cfg.ListenAddr, cfg.ApiListenAddr, cfg.SessionTimeout, cfg.KeepaliveIdle, cfg.KeepaliveInterval)
+}

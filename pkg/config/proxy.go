@@ -48,3 +48,8 @@ func (cfg *UdpProxyConfig) Validate() error {
 
 	return nil
 }
+
+func (cfg *UdpProxyConfig) String() string {
+	return fmt.Sprintf("UdpProxyConfig{ListenAddr: %s, MuxAddr: %s, EndpointAddr: %s, Ping: %t, PingSize: %d, SessionTimeout: %s, KeepaliveIdle: %s, KeepaliveInterval: %s}",
+		cfg.ListenAddr, cfg.MuxAddr, cfg.EndpointAddr, cfg.Ping, cfg.PingSize, cfg.SessionTimeout, cfg.KeepaliveIdle, cfg.KeepaliveInterval)
+}

@@ -99,6 +99,17 @@ var _ = Describe("UdpProxyConfig", func() {
 			Expect(cfg.Validate()).To(HaveOccurred())
 		})
 
+		It("fails with empty endpoint address", func() {
+			cfg.EndpointAddr = ""
+			Expect(cfg.Validate()).To(HaveOccurred())
+		})
+
+		It("succeeds with empty endpoint address but ping is enabled", func() {
+			cfg.EndpointAddr = ""
+			cfg.Ping = true
+			Expect(cfg.Validate()).To(Succeed())
+		})
+
 		It("fails with invalid mux address", func() {
 			cfg.MuxAddr = "not-valid"
 			Expect(cfg.Validate()).To(HaveOccurred())

@@ -25,8 +25,10 @@ func (cfg *UdpProxyConfig) Validate() error {
 		return err
 	}
 
-	if err := validateAddr(cfg.EndpointAddr, "endpoint address"); err != nil {
-		return err
+	if !cfg.Ping {
+		if err := validateAddr(cfg.EndpointAddr, "endpoint address"); err != nil {
+			return err
+		}
 	}
 
 	if cfg.SessionTimeout <= 0 {

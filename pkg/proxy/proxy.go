@@ -39,13 +39,14 @@ type Proxy struct {
 	sessionMgr      *SessionManager
 }
 
-func NewProxy(localAddr string, backendAddr string, workers int, sessionTimeout time.Duration) *Proxy {
+func NewProxy(localAddr string, backendAddr string, workers int, sessionTimeout, cleanupInterval time.Duration) *Proxy {
 	p := &Proxy{
-		localAddr:      localAddr,
-		backendAddr:    backendAddr,
-		workers:        workers,
-		sessionTimeout: sessionTimeout,
-		addrToWorker:   make(map[string]int),
+		localAddr:       localAddr,
+		backendAddr:     backendAddr,
+		workers:         workers,
+		sessionTimeout:  sessionTimeout,
+		cleanupInterval: cleanupInterval,
+		addrToWorker:    make(map[string]int),
 	}
 
 	return p
@@ -57,12 +58,6 @@ func (p *Proxy) AddWriteHook(hook Hook) {
 
 func (p *Proxy) AddReadHook(hook Hook) {
 	p.readHooks = append(p.readHooks, hook)
-}
-
-// SetSessionCleanupInterval overrides the interval at which idle sessions are scanned for expiry.
-// Must be called before ListenAndServe. Zero restores the default (10s).
-func (p *Proxy) SetSessionCleanupInterval(d time.Duration) {
-	p.cleanupInterval = d
 }
 
 // NumSessions returns the number of currently active client sessions.

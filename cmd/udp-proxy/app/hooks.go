@@ -93,20 +93,6 @@ func (ps *proxySession) sendProxyHello(s *proxy.ClientSession) error {
 	return err
 }
 
-func sendKeepalive(s *proxy.ClientSession) error {
-	h := frame.NewHeader(frame.FlagKeepAlive, 0)
-	b, err := frame.Encode(h)
-	if err != nil {
-		return err
-	}
-	conn := s.GetBackendConn()
-	if conn == nil {
-		return fmt.Errorf("no backend connection for KEEPALIVE")
-	}
-	_, err = conn.Write(b)
-	return err
-}
-
 // startHandshake transitions the session to HANDSHAKING and fires PROXY_HELLO retries.
 func (ps *proxySession) startHandshake(s *proxy.ClientSession, log logr.Logger) {
 	ps.setState(stateHandshaking)
@@ -157,7 +143,6 @@ func buildHooks(cfg *config.UdpProxyConfig, log logr.Logger) (proxy.Hook, proxy.
 		case stateIdle:
 			ps.bufferPacket(data)
 			ps.startHandshake(s, log)
-			s.StartKeepalive(cfg.KeepaliveIdle, cfg.KeepaliveInterval, func() error { return sendKeepalive(s) })
 			return nil, nil // suppress: no backend yet
 		case stateHandshaking:
 			ps.bufferPacket(data)
@@ -170,7 +155,7 @@ func buildHooks(cfg *config.UdpProxyConfig, log logr.Logger) (proxy.Hook, proxy.
 
 	// read: mux→client direction.
 	// Fast path: if data doesn't start with UDPM magic, it's raw backend data — pass through.
-	// Slow path: control frame — handle MUX_HELLO, KEEPALIVE, RESET.
+	// Slow path: control frame — handle MUX_HELLO, RESET.
 	read := proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
 		if !isControlFrame(data) {
 			return data, nil
@@ -180,13 +165,13 @@ func buildHooks(cfg *config.UdpProxyConfig, log logr.Logger) (proxy.Hook, proxy.
 			// Not a valid control frame — treat as raw data.
 			return data, nil
 		}
-		return handleControlFromMux(s, h, cfg, log, getOrCreate)
+		return handleControlFromMux(s, h, log, getOrCreate)
 	})
 
 	return write, read
 }
 
-func handleControlFromMux(s *proxy.ClientSession, h *frame.Header, cfg *config.UdpProxyConfig, log logr.Logger, getOrCreate func(*proxy.ClientSession) *proxySession) ([]byte, error) {
+func handleControlFromMux(s *proxy.ClientSession, h *frame.Header, log logr.Logger, getOrCreate func(*proxy.ClientSession) *proxySession) ([]byte, error) {
 	switch {
 	case h.Flags&frame.FlagMuxHello != 0:
 		ps := getOrCreate(s)
@@ -208,16 +193,11 @@ func handleControlFromMux(s *proxy.ClientSession, h *frame.Header, cfg *config.U
 		}
 		return nil, nil // consume control frame
 
-	case h.Flags&frame.FlagKeepAlive != 0:
-		return nil, nil
-
 	case h.Flags&frame.FlagReset != 0:
 		log.Info("RESET received from mux, re-handshaking", "session", s)
 		ps := getOrCreate(s)
-		s.StopKeepalive()
 		ps.setState(stateIdle)
 		ps.startHandshake(s, log)
-		s.StartKeepalive(cfg.KeepaliveIdle, cfg.KeepaliveInterval, func() error { return sendKeepalive(s) })
 		return nil, nil // consume control frame
 	}
 	return nil, fmt.Errorf("unknown control flags from mux: 0x%04x", h.Flags)

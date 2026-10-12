@@ -4,9 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"time"
 
-	"github.com/domdom82/udpmux/pkg/config"
 	"github.com/domdom82/udpmux/pkg/frame"
 	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/go-logr/logr"
@@ -14,21 +12,18 @@ import (
 
 // buildMuxHooks returns the write hook for the mux side.
 // The read hook is nil — return traffic from the backend is forwarded raw without any wrapping.
-func buildMuxHooks(cfg *config.UdpMuxConfig, log logr.Logger) proxy.Hook {
-	// unwrap: proxy→backend direction.
+func buildMuxHooks(log logr.Logger) proxy.Hook {
+	// write: proxy→backend direction.
 	//
 	// Known session (backend conn exists): forward raw data.
-	//   KEEPALIVE: refresh idle timer, suppress.
 	//   PING: echo back, suppress.
 	// Unknown session: expect PROXY_HELLO.
 	//   PING: echo back, suppress (no session needed).
 	//   other: send RESET, suppress.
-	unwrap := proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
+	write := proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
 		if s.GetBackendConn() != nil {
-			if isControlFrame(data, frame.FlagKeepAlive) {
-				return nil, nil // consume keepalive
-			}
 			if isControlFrame(data, frame.FlagPing) {
+				log.Info("PING received from proxy", "session", s, "len", len(data))
 				if err := sendRaw(s, data); err != nil {
 					log.Error(err, "failed to echo PING")
 				}
@@ -40,6 +35,7 @@ func buildMuxHooks(cfg *config.UdpMuxConfig, log logr.Logger) proxy.Hook {
 
 		// Unknown session.
 		if isControlFrame(data, frame.FlagPing) {
+			log.Info("PING received from proxy", "session", s, "len", len(data))
 			if err := sendRaw(s, data); err != nil {
 				log.Error(err, "failed to echo PING on unknown session")
 			}
@@ -86,20 +82,10 @@ func buildMuxHooks(cfg *config.UdpMuxConfig, log logr.Logger) proxy.Hook {
 		}
 		log.Info("session established", "session", s, "endpoint", endpointStr)
 
-		idle := cfg.KeepaliveIdle
-		if idle <= 0 {
-			idle = 25 * time.Second
-		}
-		interval := cfg.KeepaliveInterval
-		if interval <= 0 {
-			interval = 5 * time.Second
-		}
-		s.StartKeepalive(idle, interval, func() error { return sendControl(s, frame.FlagKeepAlive) })
-
-		return nil, nil // PROXY_HELLO was a control frame, not data
+		return nil, nil // consume PROXY_HELLO
 	})
 
-	return unwrap
+	return write
 }
 
 // isControlFrame returns true if data is a valid control frame with the given flag set.

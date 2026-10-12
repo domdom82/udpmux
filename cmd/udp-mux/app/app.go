@@ -17,11 +17,10 @@ import (
 const Name = "udp-mux"
 
 var (
-	listenAddr        string
-	apiListenAddr     string
-	sessionTimeout    time.Duration
-	keepaliveIdle     time.Duration
-	keepaliveInterval time.Duration
+	listenAddr      string
+	apiListenAddr   string
+	sessionTimeout  time.Duration
+	cleanupInterval time.Duration
 )
 
 // NewCommand creates a new cobra.Command for running udp-mux.
@@ -36,7 +35,7 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			cfg := config.NewUdpMuxConfig(listenAddr, apiListenAddr, sessionTimeout, keepaliveIdle, keepaliveInterval)
+			cfg := config.NewUdpMuxConfig(listenAddr, apiListenAddr, sessionTimeout, cleanupInterval)
 			return run(ctx, log, cfg)
 		},
 	}
@@ -45,9 +44,8 @@ func NewCommand() *cobra.Command {
 	verflag.AddFlags(flags)
 	flags.StringVarP(&listenAddr, "listenAddr", "l", ":8080", "Local address to listen on for UDP traffic")
 	flags.StringVarP(&apiListenAddr, "apiListenAddr", "a", ":8081", "Local address to listen on for API traffic")
-	flags.DurationVar(&sessionTimeout, "sessionTimeout", 30*time.Second, "Idle duration before a session is garbage-collected")
-	flags.DurationVar(&keepaliveIdle, "keepaliveIdle", 20*time.Second, "Idle duration before sending KEEPALIVE toward the proxy")
-	flags.DurationVar(&keepaliveInterval, "keepaliveInterval", 10*time.Second, "Interval between subsequent KEEPALIVE packets while idle")
+	flags.DurationVar(&sessionTimeout, "sessionTimeout", 10*time.Minute, "Idle duration before a session is garbage-collected")
+	flags.DurationVar(&cleanupInterval, "cleanupInterval", 10*time.Second, "Interval to check for idle sessions to clean up")
 	return cmd
 }
 
@@ -60,7 +58,7 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
 		return err
 	}
 
-	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0), cfg.SessionTimeout)
+	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0), cfg.SessionTimeout, cfg.CleanupInterval)
 
 	wg := errgroup.Group{}
 	wg.Go(func() error { return runProxy(ctx, log, cfg, p) })

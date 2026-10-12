@@ -31,9 +31,9 @@ udpmux tunnels multiple UDP flows over a single shared port using a custom binar
 
 ### Two binaries
 
-**`cmd/udp-proxy`** — client-side: manages the session handshake with the mux, buffers packets during handshake, forwards raw data once established, and sends keepalives when idle.
+**`cmd/udp-proxy`** — client-side: manages the session handshake with the mux, buffers packets during handshake, forwards raw data once established.
 
-**`cmd/udp-mux`** — server-side: handles session handshakes, dispatches raw data to the right backend, and sends keepalives when idle. Also serves an HTTP API on `:8081`:
+**`cmd/udp-mux`** — server-side: handles session handshakes, dispatches raw data to the right backend. Also serves an HTTP API on `:8081`:
 - `GET /api/sessions` — current active session count
 - `GET /healthz`, `GET /readyz`
 
@@ -41,12 +41,11 @@ udpmux tunnels multiple UDP flows over a single shared port using a custom binar
 
 Magic bytes: `0x5544504D` ("UDPM"). 8-byte control frame header: `[Magic 4B][Flags 2B][Length 2B]`.
 
-Steady-state data is forwarded **raw with zero overhead** — no header on data packets. Control frames are only used for session lifecycle and keepalive.
+Steady-state data is forwarded **raw with zero overhead** — no header on data packets. Control frames are only used for session lifecycle.
 
 Flag constants:
 - `FlagProxyHello` — proxy initiates handshake; payload carries the backend endpoint string
 - `FlagMuxHello` — mux acknowledges handshake; no payload
-- `FlagKeepAlive` — keepalive to prevent session expiry; no payload
 - `FlagReset` — mux requests re-handshake (unknown session); no payload
 - `FlagPing` — proxy pings the mux directly to check connectivity; mux echoes it back
 
@@ -62,20 +61,20 @@ IDLE → HANDSHAKING → ESTABLISHED
 
 The mux side (`cmd/udp-mux/app/hooks.go`) disambiguates by backend conn: known session → raw data path; no conn → expect PROXY_HELLO.
 
-### Keepalive (`pkg/proxy/session.go`)
+### Session expiry (`pkg/proxy/session.go`)
 
-Both sides independently send KEEPALIVE when idle. Keepalive is integrated into `ClientSession` via `StartKeepalive(idle, interval, sendFn)` / `StopKeepalive()`. The goroutine reads `lastActive atomic.Int64` for idle measurement and does **not** refresh on send — only received traffic (any packet) refreshes the expiry timer.
+Sessions expire after inactivity and are cleaned up every 10 s. The proxy default timeout (5 min) is intentionally shorter than the mux default (10 min) so the proxy always expires first — ensuring re-handshakes are always initiated cleanly rather than colliding with a stale mux session.
 
 ### Core proxy engine (`pkg/proxy/`)
 
 - `proxy.go` — `Proxy` struct: uses `ipv4.ReadBatch` (recvmmsg, batch size 32). Hashes client addresses to fixed worker goroutines to preserve per-client packet ordering.
-- `session.go` — `ClientSession` / `SessionManager`: one session per unique client address, each with a write-to-backend and read-from-backend goroutine. Sessions expire after 30 s of inactivity (cleanup every 10 s). Socket buffers are maximised to 16 MB. `StartKeepalive` / `StopKeepalive` manage the keepalive goroutine.
+- `session.go` — `ClientSession` / `SessionManager`: one session per unique client address, each with a write-to-backend and read-from-backend goroutine. Sessions expire after configurable inactivity (cleanup every 10 s). Socket buffers are maximised to 16 MB.
 - `hook.go` — `Hook` type (`func(*ClientSession, []byte) ([]byte, error)`): framing logic is injected as read/write hooks, keeping the proxy engine protocol-agnostic. Returning `nil, nil` suppresses forwarding without error.
 
 ### Config (`pkg/config/`)
 
-- `proxy.go` — `UdpProxyConfig`: listen/mux/endpoint addresses, session timeout, keepalive idle/interval, optional ping
-- `mux.go` — `UdpMuxConfig`: listen/api addresses, session timeout, keepalive idle/interval
+- `proxy.go` — `UdpProxyConfig`: listen/mux/endpoint addresses, session timeout (default 5 min), optional ping
+- `mux.go` — `UdpMuxConfig`: listen/api addresses, session timeout (default 10 min)
 - `validate.go` — address validation shared by both configs
 
 ### Integration test environment

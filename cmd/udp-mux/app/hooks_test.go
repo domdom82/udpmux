@@ -79,9 +79,9 @@ var _ = Describe("mux-side protocol", func() {
 		ctx, cancel = context.WithCancel(context.Background())
 		stopped = make(chan struct{})
 
-		cfg := config.NewUdpMuxConfig(muxAddr.String(), ":0", 30*time.Second, 25*time.Second, 5*time.Second)
-		p := proxy.NewProxy(cfg.ListenAddr, "", 2, cfg.SessionTimeout)
-		unwrap := buildMuxHooks(cfg, logr.Discard())
+		cfg := config.NewUdpMuxConfig(muxAddr.String(), ":0", 30*time.Second, 10*time.Second)
+		p := proxy.NewProxy(cfg.ListenAddr, "", 2, cfg.SessionTimeout, cfg.CleanupInterval)
+		unwrap := buildMuxHooks(logr.Discard())
 		p.AddWriteHook(unwrap)
 
 		go func() {
@@ -165,9 +165,9 @@ var _ = Describe("mux-side protocol", func() {
 		ctx2, cancel2 := context.WithCancel(context.Background())
 		stopped2 := make(chan struct{})
 		defer cancel2()
-		cfg2 := config.NewUdpMuxConfig(muxAddr.String(), ":0", 30*time.Second, 25*time.Second, 5*time.Second)
-		p2 := proxy.NewProxy(cfg2.ListenAddr, "", 2, cfg2.SessionTimeout)
-		p2.AddWriteHook(buildMuxHooks(cfg2, logr.Discard()))
+		cfg2 := config.NewUdpMuxConfig(muxAddr.String(), ":0", 30*time.Second, 10*time.Second)
+		p2 := proxy.NewProxy(cfg2.ListenAddr, "", 2, cfg2.SessionTimeout, cfg2.CleanupInterval)
+		p2.AddWriteHook(buildMuxHooks(logr.Discard()))
 		go func() {
 			defer close(stopped2)
 			_ = p2.ListenAndServe(ctx2, logr.Discard())
@@ -196,24 +196,4 @@ var _ = Describe("mux-side protocol", func() {
 		Expect(got).To(Equal([]byte("after recovery")))
 	})
 
-	It("refreshes session on KEEPALIVE (no backend forward)", func() {
-		// Establish session.
-		hello := buildProxyHello(backendAddr.String())
-		_, err := proxyConn.WriteTo(hello, muxAddr)
-		Expect(err).NotTo(HaveOccurred())
-		reply, _, ok := readWithTimeout(proxyConn, time.Second)
-		Expect(ok).To(BeTrue())
-		Expect(isFlagSet(reply, frame.FlagMuxHello)).To(BeTrue())
-
-		// Send KEEPALIVE.
-		kah := frame.NewHeader(frame.FlagKeepAlive, 0)
-		kaBytes, err := frame.Encode(kah)
-		Expect(err).NotTo(HaveOccurred())
-		_, err = proxyConn.WriteTo(kaBytes, muxAddr)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Backend should NOT receive anything (keepalive is consumed by mux).
-		_, _, gotData := readWithTimeout(backendConn, 200*time.Millisecond)
-		Expect(gotData).To(BeFalse(), "KEEPALIVE must not be forwarded to backend")
-	})
 })

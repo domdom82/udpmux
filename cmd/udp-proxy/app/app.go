@@ -16,14 +16,13 @@ import (
 const Name = "udp-proxy"
 
 var (
-	listenAddr        string
-	muxAddr           string
-	endpointAddr      string
-	ping              bool
-	pingsize          int
-	sessionTimeout    time.Duration
-	keepaliveIdle     time.Duration
-	keepaliveInterval time.Duration
+	listenAddr      string
+	muxAddr         string
+	endpointAddr    string
+	ping            bool
+	pingsize        int
+	sessionTimeout  time.Duration
+	cleanupInterval time.Duration
 )
 
 // NewCommand creates a new cobra.Command for running udp-proxy.
@@ -39,14 +38,13 @@ func NewCommand() *cobra.Command {
 			}
 			ctx := cmd.Context()
 			cfg := &config.UdpProxyConfig{
-				ListenAddr:        listenAddr,
-				MuxAddr:           muxAddr,
-				EndpointAddr:      endpointAddr,
-				Ping:              ping,
-				PingSize:          pingsize,
-				SessionTimeout:    sessionTimeout,
-				KeepaliveIdle:     keepaliveIdle,
-				KeepaliveInterval: keepaliveInterval,
+				ListenAddr:      listenAddr,
+				MuxAddr:         muxAddr,
+				EndpointAddr:    endpointAddr,
+				Ping:            ping,
+				PingSize:        pingsize,
+				SessionTimeout:  sessionTimeout,
+				CleanupInterval: cleanupInterval,
 			}
 			return run(ctx, log, cfg)
 		},
@@ -59,9 +57,8 @@ func NewCommand() *cobra.Command {
 	flags.StringVarP(&endpointAddr, "endpointAddr", "e", "", "Endpoint address in the format <host>:<port>")
 	flags.BoolVarP(&ping, "ping", "i", false, "If set, the udp proxy will only send pings to the mux.")
 	flags.IntVarP(&pingsize, "size", "s", 0, "Size of the ping payload to send. Only used if ping is set.")
-	flags.DurationVar(&sessionTimeout, "sessionTimeout", 30*time.Second, "Idle duration before a session is garbage-collected")
-	flags.DurationVar(&keepaliveIdle, "keepaliveIdle", 20*time.Second, "Inactivity duration before sending the first KEEPALIVE")
-	flags.DurationVar(&keepaliveInterval, "keepaliveInterval", 10*time.Second, "Interval between subsequent KEEPALIVE packets while session is idle")
+	flags.DurationVar(&sessionTimeout, "sessionTimeout", 5*time.Minute, "Idle duration before a session is garbage-collected")
+	flags.DurationVar(&cleanupInterval, "cleanupInterval", 10*time.Second, "Interval to check for idle sessions to clean up")
 
 	return cmd
 }

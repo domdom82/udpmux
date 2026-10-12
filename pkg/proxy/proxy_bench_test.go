@@ -29,7 +29,7 @@ func startBenchProxy(b *testing.B, backendAddr string, writeHooks, readHooks []H
 	tmp, addr := mustBindUDP(b)
 	tmp.Close()
 
-	p := NewProxy(addr.String(), backendAddr, 4, 0)
+	p := NewProxy(addr.String(), backendAddr, 4, 0, 0)
 	for _, h := range writeHooks {
 		p.AddWriteHook(h)
 	}

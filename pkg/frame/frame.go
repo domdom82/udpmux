@@ -15,8 +15,7 @@ const (
 	FlagPing       uint16 = 1 << 0 // Ping: mux echoes the frame back; payload is optional padding.
 	FlagProxyHello uint16 = 1 << 1 // Proxy initiates session handshake; payload carries endpoint string.
 	FlagMuxHello   uint16 = 1 << 2 // Mux acknowledges handshake; no payload.
-	FlagKeepAlive  uint16 = 1 << 3 // Keepalive to prevent session expiry; no payload.
-	FlagReset      uint16 = 1 << 4 // Mux requests re-handshake (unknown session); no payload.
+	FlagReset      uint16 = 1 << 3 // Mux requests re-handshake (unknown session); no payload.
 )
 
 // Header is the fixed-size control frame header.

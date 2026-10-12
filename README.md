@@ -33,13 +33,12 @@ Magic bytes: `0x5544504D` ("UDPM").
 Steady-state data is forwarded **raw with zero overhead** — no header on data packets.
 Control frames are used only during session lifecycle and keepalive:
 
-| Flag          | Direction   | Payload                                    |
-|---------------|-------------|--------------------------------------------|
-| `PROXY_HELLO` | proxy → mux | backend endpoint string (e.g. `host:port`) |
-| `MUX_HELLO`   | mux → proxy | none                                       |
-| `KEEPALIVE`   | both        | none                                       |
-| `RESET`       | mux → proxy | none (triggers re-handshake)               |
-| `PING`        | proxy → mux | optional padding; mux echoes it back       |
+| Flag               | Direction   | Payload                                    |
+|--------------------|-------------|--------------------------------------------|
+| `PROXY_HELLO`      | proxy → mux | backend endpoint string (e.g. `host:port`) |
+| `MUX_HELLO`        | mux → proxy | none                                       |
+| `RESET`            | mux → proxy | none (triggers re-handshake)               |
+| `PING`             | proxy → mux | optional padding; mux echoes it back       |
 
 ## Session lifecycle
 
@@ -51,4 +50,7 @@ IDLE → HANDSHAKING → ESTABLISHED
 - **HANDSHAKING**: further packets are buffered
 - **ESTABLISHED**: raw data forwarded directly; buffered packets flushed on MUX_HELLO receipt
 
-Sessions expire after 30 s of inactivity. Both sides independently send KEEPALIVE when idle.
+Sessions expire after inactivity (default: 5 min on the proxy, 10 min on the mux). The proxy
+timeout is intentionally shorter so the proxy always expires first — when a client resumes after
+a long pause the proxy re-handshakes cleanly rather than sending data on a stale mux session and
+losing packets to a RESET.

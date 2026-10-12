@@ -30,11 +30,6 @@ type ClientSession struct {
 	writeHooks   []Hook
 	readHooks    []Hook
 
-	keepaliveIdle     time.Duration
-	keepaliveInterval time.Duration
-	sendKeepalive     func() error // nil = keepalive not configured
-	keepaliveDone     chan struct{}
-
 	tags map[string]any // hook-owned state; opaque to the engine
 }
 
@@ -213,7 +208,6 @@ func (s *ClientSession) writeToBackendLoop() {
 			if !ok {
 				return
 			}
-			s.refresh()
 			// Hand off to hooks if any
 			var err error
 			for _, hook := range s.writeHooks {
@@ -226,6 +220,7 @@ func (s *ClientSession) writeToBackendLoop() {
 			if data == nil {
 				continue
 			}
+			s.refresh()
 			conn := s.GetBackendConn()
 			if conn == nil {
 				s.log.Error(err, "Missing backend connection", "session", s)
@@ -258,23 +253,23 @@ func (s *ClientSession) readFromBackendLoop() {
 			if err != nil {
 				return // Closed socket or session expired
 			}
-			s.refresh()
 			// Hand off to hooks if any
 			data := buf[:n]
 			for _, hook := range s.readHooks {
 				data, err = hook(s, data)
 				if err != nil {
-					s.log.Error(err, "Failed to call read hook", "client", s.clientAddr.String(), "backend", conn.RemoteAddr())
+					s.log.Error(err, "Failed to call read hook", "session", s)
 				}
 			}
 			// No data means the hook consumed it, so don't forward to client.
 			if data == nil {
 				continue
 			}
+			s.refresh()
 			// Forward return packet back to original client via frontend socket
 			_, err = s.frontendConn.WriteTo(data, s.clientAddr)
 			if err != nil {
-				s.log.Error(err, "Failed returning packet to client", "client", s.clientAddr.String(), "backend", conn.RemoteAddr())
+				s.log.Error(err, "Failed returning packet to client", "session", s)
 			}
 		}
 	}
@@ -319,57 +314,6 @@ func (s *ClientSession) GetTag(key string) any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.tags[key]
-}
-
-// StartKeepalive begins sending keepalive frames when the session is idle.
-// Idempotent: calling it again while already running is a no-op.
-func (s *ClientSession) StartKeepalive(idle, interval time.Duration, send func() error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.keepaliveDone != nil {
-		return // already running
-	}
-	s.keepaliveIdle = idle
-	s.keepaliveInterval = interval
-	s.sendKeepalive = send
-	s.keepaliveDone = make(chan struct{})
-	go s.keepaliveLoop(s.keepaliveDone)
-}
-
-// StopKeepalive stops the keepalive goroutine if it is running.
-func (s *ClientSession) StopKeepalive() {
-	s.mu.Lock()
-	ch := s.keepaliveDone
-	s.keepaliveDone = nil
-	s.mu.Unlock()
-	if ch != nil {
-		select {
-		case <-ch:
-		default:
-			close(ch)
-		}
-	}
-}
-
-func (s *ClientSession) keepaliveLoop(done chan struct{}) {
-	ticker := time.NewTicker(s.keepaliveInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-done:
-			return
-		case <-s.done:
-			return
-		case <-ticker.C:
-			idle := time.Duration(time.Now().UnixNano() - s.lastActive.Load())
-			if idle >= s.keepaliveIdle {
-				if err := s.sendKeepalive(); err != nil {
-					s.log.Error(err, "failed to send keepalive")
-				}
-				// Do NOT Refresh() here: only received traffic refreshes expiry.
-			}
-		}
-	}
 }
 
 func DialBackend(backend *net.UDPAddr) (*net.UDPConn, error) {

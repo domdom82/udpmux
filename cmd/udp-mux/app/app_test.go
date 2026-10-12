@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
@@ -35,7 +34,7 @@ var _ = Describe("/healthz", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 20*time.Second, 10*time.Second), nil)
+		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 0), nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -51,7 +50,7 @@ var _ = Describe("/readyz", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 20*time.Second, 10*time.Second), nil)
+		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 0), nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -67,7 +66,7 @@ var _ = Describe("/metrics", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 20*time.Second, 10*time.Second), nil)
+		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 0), nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -83,7 +82,7 @@ var _ = Describe("/api/sessions", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 20*time.Second, 10*time.Second), nil)
+		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 0), nil)
 	})
 
 	AfterEach(func() { srv.Close() })

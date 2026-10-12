@@ -19,9 +19,7 @@ var _ = Describe("UdpMuxConfig", func() {
 	var cfg *config.UdpMuxConfig
 
 	BeforeEach(func() {
-		cfg = config.NewUdpMuxConfig(":8080", ":8081", 30*time.Second, 20*time.Second, 10*time.Second)
-		cfg.KeepaliveIdle = 25 * time.Second
-		cfg.KeepaliveInterval = 5 * time.Second
+		cfg = config.NewUdpMuxConfig(":8080", ":8081", 30*time.Second, 10*time.Second)
 	})
 
 	Describe("Validate", func() {
@@ -30,42 +28,29 @@ var _ = Describe("UdpMuxConfig", func() {
 		})
 
 		It("fails with empty listen address", func() {
-			cfg = config.NewUdpMuxConfig("", ":8081", 30*time.Second, 20*time.Second, 10*time.Second)
+			cfg = config.NewUdpMuxConfig("", ":8081", 30*time.Second, 10*time.Second)
 			Expect(cfg.Validate()).To(HaveOccurred())
 		})
 
 		It("fails with empty api listen address", func() {
-			cfg = config.NewUdpMuxConfig(":8080", "", 30*time.Second, 20*time.Second, 10*time.Second)
+			cfg = config.NewUdpMuxConfig(":8080", "", 30*time.Second, 10*time.Second)
 			Expect(cfg.Validate()).To(HaveOccurred())
 		})
 
 		It("fails with invalid listen address", func() {
-			cfg = config.NewUdpMuxConfig("not-an-addr", ":8081", 0, 20*time.Second, 10*time.Second)
+			cfg = config.NewUdpMuxConfig("not-an-addr", ":8081", 30*time.Second, 10*time.Second)
 			Expect(cfg.Validate()).To(HaveOccurred())
 		})
 
 		It("fails when session_timeout is zero", func() {
-			cfg = config.NewUdpMuxConfig(":8080", ":8081", 0, 20*time.Second, 10*time.Second)
+			cfg = config.NewUdpMuxConfig(":8080", ":8081", 0, 10*time.Second)
 			Expect(cfg.Validate()).To(HaveOccurred())
 			Expect(cfg.Validate().Error()).To(ContainSubstring("session_timeout"))
 		})
-
-		It("fails when keepalive_idle is zero", func() {
-			cfg = config.NewUdpMuxConfig(":8080", ":8081", 30*time.Second, 0, 10*time.Second)
+		It("fails when cleanup_interval is zero", func() {
+			cfg = config.NewUdpMuxConfig(":8080", ":8081", 10*time.Second, 0)
 			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("keepalive_idle"))
-		})
-
-		It("fails when keepalive_interval is zero", func() {
-			cfg = config.NewUdpMuxConfig(":8080", ":8081", 30*time.Second, 25*time.Second, 0)
-			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("keepalive_interval"))
-		})
-
-		It("fails when keepalive_idle >= session_timeout", func() {
-			cfg = config.NewUdpMuxConfig(":8080", ":8081", 30*time.Second, 30*time.Second, 5*time.Second)
-			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("keepalive_idle must be less than"))
+			Expect(cfg.Validate().Error()).To(ContainSubstring("cleanup_interval"))
 		})
 	})
 })
@@ -75,12 +60,11 @@ var _ = Describe("UdpProxyConfig", func() {
 
 	BeforeEach(func() {
 		cfg = &config.UdpProxyConfig{
-			ListenAddr:        ":7070",
-			MuxAddr:           "127.0.0.1:8080",
-			EndpointAddr:      "127.0.0.1:1194",
-			SessionTimeout:    30 * time.Second,
-			KeepaliveIdle:     25 * time.Second,
-			KeepaliveInterval: 5 * time.Second,
+			ListenAddr:      ":7070",
+			MuxAddr:         "127.0.0.1:8080",
+			EndpointAddr:    "127.0.0.1:1194",
+			SessionTimeout:  30 * time.Second,
+			CleanupInterval: 10 * time.Second,
 		}
 	})
 
@@ -121,16 +105,10 @@ var _ = Describe("UdpProxyConfig", func() {
 			Expect(cfg.Validate().Error()).To(ContainSubstring("session_timeout"))
 		})
 
-		It("fails when keepalive_idle is zero", func() {
-			cfg.KeepaliveIdle = 0
+		It("fails when cleanup_interval is zero", func() {
+			cfg.CleanupInterval = 0
 			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("keepalive_idle"))
-		})
-
-		It("fails when keepalive_idle >= session_timeout", func() {
-			cfg.KeepaliveIdle = cfg.SessionTimeout
-			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("keepalive_idle must be less than"))
+			Expect(cfg.Validate().Error()).To(ContainSubstring("cleanup_interval"))
 		})
 
 		It("fails with negative ping size", func() {

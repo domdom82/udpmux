@@ -51,14 +51,6 @@ var _ = Describe("Frame", func() {
 			Expect(h2.Length).To(BeZero())
 		})
 
-		It("round-trips FlagKeepAlive with no payload", func() {
-			h := frame.NewHeader(frame.FlagKeepAlive, 0)
-			buf, _ := frame.Encode(h)
-			h2, err := frame.Decode(buf)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(h2.Flags & frame.FlagKeepAlive).To(Equal(frame.FlagKeepAlive))
-		})
-
 		It("round-trips FlagReset with no payload", func() {
 			h := frame.NewHeader(frame.FlagReset, 0)
 			buf, _ := frame.Encode(h)
@@ -89,7 +81,7 @@ var _ = Describe("Frame", func() {
 
 	Describe("Flag constants", func() {
 		It("all flags are distinct", func() {
-			flags := []uint16{frame.FlagPing, frame.FlagProxyHello, frame.FlagMuxHello, frame.FlagKeepAlive, frame.FlagReset}
+			flags := []uint16{frame.FlagPing, frame.FlagProxyHello, frame.FlagMuxHello, frame.FlagReset}
 			for i := range flags {
 				for j := range flags {
 					if i != j {

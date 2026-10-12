@@ -10,7 +10,7 @@ import (
 )
 
 func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpProxyConfig) error {
-	p := proxy.NewProxy(cfg.ListenAddr, cfg.MuxAddr, runtime.GOMAXPROCS(0), cfg.SessionTimeout)
+	p := proxy.NewProxy(cfg.ListenAddr, cfg.MuxAddr, runtime.GOMAXPROCS(0), cfg.SessionTimeout, cfg.CleanupInterval)
 	write, read := buildHooks(cfg, log)
 	p.AddWriteHook(write)
 	p.AddReadHook(read)

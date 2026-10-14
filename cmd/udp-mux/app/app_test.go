@@ -34,7 +34,13 @@ var _ = Describe("/healthz", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 0), nil)
+		srv = newTestServer(&config.UdpMuxConfig{
+			ListenAddr:           ":8080",
+			ApiListenAddr:        ":8081",
+			SessionTimeout:       0,
+			CleanupInterval:      0,
+			MaxSessionsPerClient: 0,
+		}, nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -50,7 +56,13 @@ var _ = Describe("/readyz", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 0), nil)
+		srv = newTestServer(&config.UdpMuxConfig{
+			ListenAddr:           ":8080",
+			ApiListenAddr:        ":8081",
+			SessionTimeout:       0,
+			CleanupInterval:      0,
+			MaxSessionsPerClient: 0,
+		}, nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -66,7 +78,13 @@ var _ = Describe("/metrics", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 0), nil)
+		srv = newTestServer(&config.UdpMuxConfig{
+			ListenAddr:           ":8080",
+			ApiListenAddr:        ":8081",
+			SessionTimeout:       0,
+			CleanupInterval:      0,
+			MaxSessionsPerClient: 0,
+		}, nil)
 	})
 
 	AfterEach(func() { srv.Close() })
@@ -82,7 +100,13 @@ var _ = Describe("/api/sessions", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = newTestServer(config.NewUdpMuxConfig(":8080", ":8081", 0, 0), nil)
+		srv = newTestServer(&config.UdpMuxConfig{
+			ListenAddr:           ":8080",
+			ApiListenAddr:        ":8081",
+			SessionTimeout:       0,
+			CleanupInterval:      0,
+			MaxSessionsPerClient: 0,
+		}, nil)
 	})
 
 	AfterEach(func() { srv.Close() })

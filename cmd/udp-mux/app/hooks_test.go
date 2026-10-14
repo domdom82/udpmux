@@ -10,7 +10,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/domdom82/udpmux/pkg/config"
 	"github.com/domdom82/udpmux/pkg/frame"
 	"github.com/domdom82/udpmux/pkg/proxy"
 )
@@ -79,8 +78,7 @@ var _ = Describe("mux-side protocol", func() {
 		ctx, cancel = context.WithCancel(context.Background())
 		stopped = make(chan struct{})
 
-		cfg := config.NewUdpMuxConfig(muxAddr.String(), ":0", 30*time.Second, 10*time.Second)
-		p := proxy.NewProxy(cfg.ListenAddr, "", 2, cfg.SessionTimeout, cfg.CleanupInterval)
+		p := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, 2)
 		unwrap := buildMuxHooks(logr.Discard())
 		p.AddWriteHook(unwrap)
 
@@ -165,8 +163,7 @@ var _ = Describe("mux-side protocol", func() {
 		ctx2, cancel2 := context.WithCancel(context.Background())
 		stopped2 := make(chan struct{})
 		defer cancel2()
-		cfg2 := config.NewUdpMuxConfig(muxAddr.String(), ":0", 30*time.Second, 10*time.Second)
-		p2 := proxy.NewProxy(cfg2.ListenAddr, "", 2, cfg2.SessionTimeout, cfg2.CleanupInterval)
+		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, 2)
 		p2.AddWriteHook(buildMuxHooks(logr.Discard()))
 		go func() {
 			defer close(stopped2)
@@ -194,6 +191,107 @@ var _ = Describe("mux-side protocol", func() {
 		got, _, ok := readWithTimeout(backendConn, time.Second)
 		Expect(ok).To(BeTrue())
 		Expect(got).To(Equal([]byte("after recovery")))
+	})
+
+	It("expires bogus sessions after maxResetsPerSession non-UDPM packets", func() {
+		// Send maxResetsPerSession non-UDPM packets from the established proxyConn.
+		// The mux will send a RESET for each and then call s.Expire(), making the session
+		// eligible for immediate cleanup on the next cleanup tick.
+		for range maxResetsPerSession {
+			_, err := proxyConn.WriteTo([]byte("not udpm"), muxAddr)
+			Expect(err).NotTo(HaveOccurred())
+			// Drain the RESET reply so the socket buffer doesn't fill up.
+			readWithTimeout(proxyConn, 200*time.Millisecond)
+		}
+
+		// The cleanup interval in BeforeEach is 10s — too slow. Restart the mux with a
+		// short cleanup interval for this sub-test.
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+		}
+
+		ctx2, cancel2 := context.WithCancel(context.Background())
+		stopped2 := make(chan struct{})
+		defer cancel2()
+		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 50*time.Millisecond, 0)
+		p2.AddWriteHook(buildMuxHooks(logr.Discard()))
+		go func() {
+			defer close(stopped2)
+			_ = p2.ListenAndServe(ctx2, logr.Discard())
+		}()
+		time.Sleep(30 * time.Millisecond)
+
+		// Flood the new mux with non-UDPM packets from N distinct ports.
+		const N = 20
+		conns := make([]*net.UDPConn, N)
+		for i := range N {
+			conns[i], _ = bindTestUDP()
+		}
+		defer func() {
+			for _, c := range conns {
+				c.Close()
+			}
+		}()
+
+		for _, c := range conns {
+			for range maxResetsPerSession {
+				_, _ = c.WriteTo([]byte("garbage"), muxAddr)
+				readWithTimeout(c, 50*time.Millisecond)
+			}
+		}
+
+		// Wait for several cleanup ticks to ensure all expired sessions are reaped.
+		time.Sleep(500 * time.Millisecond)
+
+		Expect(p2.NumSessions()).To(Equal(0), "all bogus sessions should have been expired and reaped")
+	})
+
+	It("rejects sessions beyond the per-client limit", func() {
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+		}
+
+		const limit = 3
+		ctx2, cancel2 := context.WithCancel(context.Background())
+		stopped2 := make(chan struct{})
+		defer cancel2()
+		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, limit)
+		p2.AddWriteHook(buildMuxHooks(logr.Discard()))
+		go func() {
+			defer close(stopped2)
+			_ = p2.ListenAndServe(ctx2, logr.Discard())
+		}()
+		time.Sleep(30 * time.Millisecond)
+
+		// Send PROXY_HELLO from limit+2 distinct ports on 127.0.0.1.
+		const total = limit + 2
+		conns := make([]*net.UDPConn, total)
+		for i := range total {
+			conns[i], _ = bindTestUDP()
+		}
+		defer func() {
+			for _, c := range conns {
+				c.Close()
+			}
+		}()
+
+		accepted := 0
+		for _, c := range conns {
+			hello := buildProxyHello(backendAddr.String())
+			_, err := c.WriteTo(hello, muxAddr)
+			Expect(err).NotTo(HaveOccurred())
+			_, _, ok := readWithTimeout(c, 300*time.Millisecond)
+			if ok {
+				accepted++
+			}
+		}
+
+		Expect(accepted).To(Equal(limit), "only limit sessions should be accepted; excess must be silently dropped")
+		Expect(p2.NumSessions()).To(BeNumerically("<=", limit))
 	})
 
 })

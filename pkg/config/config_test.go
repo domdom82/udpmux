@@ -19,7 +19,12 @@ var _ = Describe("UdpMuxConfig", func() {
 	var cfg *config.UdpMuxConfig
 
 	BeforeEach(func() {
-		cfg = config.NewUdpMuxConfig(":8080", ":8081", 30*time.Second, 10*time.Second)
+		cfg = &config.UdpMuxConfig{
+			ListenAddr:      ":8080",
+			ApiListenAddr:   ":8081",
+			SessionTimeout:  30 * time.Second,
+			CleanupInterval: 10 * time.Second,
+		}
 	})
 
 	Describe("Validate", func() {
@@ -28,29 +33,29 @@ var _ = Describe("UdpMuxConfig", func() {
 		})
 
 		It("fails with empty listen address", func() {
-			cfg = config.NewUdpMuxConfig("", ":8081", 30*time.Second, 10*time.Second)
+			cfg.ListenAddr = ""
 			Expect(cfg.Validate()).To(HaveOccurred())
 		})
 
 		It("fails with empty api listen address", func() {
-			cfg = config.NewUdpMuxConfig(":8080", "", 30*time.Second, 10*time.Second)
+			cfg.ApiListenAddr = ""
 			Expect(cfg.Validate()).To(HaveOccurred())
 		})
 
 		It("fails with invalid listen address", func() {
-			cfg = config.NewUdpMuxConfig("not-an-addr", ":8081", 30*time.Second, 10*time.Second)
+			cfg.ListenAddr = "not-an-addr"
 			Expect(cfg.Validate()).To(HaveOccurred())
 		})
 
-		It("fails when session_timeout is zero", func() {
-			cfg = config.NewUdpMuxConfig(":8080", ":8081", 0, 10*time.Second)
+		It("fails when sessionTimeout is zero", func() {
+			cfg.SessionTimeout = 0
 			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("session_timeout"))
+			Expect(cfg.Validate().Error()).To(ContainSubstring("sessionTimeout"))
 		})
-		It("fails when cleanup_interval is zero", func() {
-			cfg = config.NewUdpMuxConfig(":8080", ":8081", 10*time.Second, 0)
+		It("fails when cleanupInterval is zero", func() {
+			cfg.CleanupInterval = 0
 			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("cleanup_interval"))
+			Expect(cfg.Validate().Error()).To(ContainSubstring("cleanupInterval"))
 		})
 	})
 })
@@ -99,16 +104,16 @@ var _ = Describe("UdpProxyConfig", func() {
 			Expect(cfg.Validate()).To(HaveOccurred())
 		})
 
-		It("fails when session_timeout is zero", func() {
+		It("fails when sessionTimeout is zero", func() {
 			cfg.SessionTimeout = 0
 			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("session_timeout"))
+			Expect(cfg.Validate().Error()).To(ContainSubstring("sessionTimeout"))
 		})
 
-		It("fails when cleanup_interval is zero", func() {
+		It("fails when cleanupInterval is zero", func() {
 			cfg.CleanupInterval = 0
 			Expect(cfg.Validate()).To(HaveOccurred())
-			Expect(cfg.Validate().Error()).To(ContainSubstring("cleanup_interval"))
+			Expect(cfg.Validate().Error()).To(ContainSubstring("cleanupInterval"))
 		})
 
 		It("fails with negative ping size", func() {

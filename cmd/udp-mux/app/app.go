@@ -17,10 +17,11 @@ import (
 const Name = "udp-mux"
 
 var (
-	listenAddr      string
-	apiListenAddr   string
-	sessionTimeout  time.Duration
-	cleanupInterval time.Duration
+	listenAddr           string
+	apiListenAddr        string
+	sessionTimeout       time.Duration
+	cleanupInterval      time.Duration
+	maxSessionsPerClient int
 )
 
 // NewCommand creates a new cobra.Command for running udp-mux.
@@ -35,7 +36,14 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			cfg := config.NewUdpMuxConfig(listenAddr, apiListenAddr, sessionTimeout, cleanupInterval)
+			cfg := &config.UdpMuxConfig{
+				ListenAddr:           listenAddr,
+				ApiListenAddr:        apiListenAddr,
+				SessionTimeout:       sessionTimeout,
+				CleanupInterval:      cleanupInterval,
+				MaxSessionsPerClient: maxSessionsPerClient,
+			}
+			cfg.MaxSessionsPerClient = maxSessionsPerClient
 			return run(ctx, log, cfg)
 		},
 	}
@@ -44,8 +52,9 @@ func NewCommand() *cobra.Command {
 	verflag.AddFlags(flags)
 	flags.StringVarP(&listenAddr, "listenAddr", "l", ":8080", "Local address to listen on for UDP traffic")
 	flags.StringVarP(&apiListenAddr, "apiListenAddr", "a", ":8081", "Local address to listen on for API traffic")
-	flags.DurationVar(&sessionTimeout, "sessionTimeout", 10*time.Minute, "Idle duration before a session is garbage-collected")
+	flags.DurationVar(&sessionTimeout, "sessionTimeout", 5*time.Minute, "Idle duration before a session is garbage-collected")
 	flags.DurationVar(&cleanupInterval, "cleanupInterval", 10*time.Second, "Interval to check for idle sessions to clean up")
+	flags.IntVar(&maxSessionsPerClient, "maxSessionsPerClient", 10, "Max concurrent sessions per client IP (0 = unlimited)")
 	return cmd
 }
 
@@ -58,7 +67,7 @@ func run(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig) error {
 		return err
 	}
 
-	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0), cfg.SessionTimeout, cfg.CleanupInterval)
+	p := proxy.NewProxy(cfg.ListenAddr, "", runtime.GOMAXPROCS(0), cfg.SessionTimeout, cfg.CleanupInterval, cfg.MaxSessionsPerClient)
 
 	wg := errgroup.Group{}
 	wg.Go(func() error { return runProxy(ctx, log, cfg, p) })

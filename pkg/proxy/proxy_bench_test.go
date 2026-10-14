@@ -9,6 +9,14 @@ import (
 	"github.com/go-logr/logr"
 )
 
+// ---- thresholds ----------------------------------------------------------------
+
+const (
+	// minThroughput is the minimum acceptable throughput for the proxy in packets/s.
+	minThroughput = 70000
+	payloadSize   = 1460 // typical MSS for 1500 MTU
+)
+
 // ---- helpers ----------------------------------------------------------------
 
 func mustBindUDP(b *testing.B) (*net.UDPConn, *net.UDPAddr) {
@@ -29,7 +37,7 @@ func startBenchProxy(b *testing.B, backendAddr string, writeHooks, readHooks []H
 	tmp, addr := mustBindUDP(b)
 	tmp.Close()
 
-	p := NewProxy(addr.String(), backendAddr, 4, 0, 0)
+	p := NewProxy(addr.String(), backendAddr, 4, 0, 0, 0)
 	for _, h := range writeHooks {
 		p.AddWriteHook(h)
 	}
@@ -41,6 +49,22 @@ func startBenchProxy(b *testing.B, backendAddr string, writeHooks, readHooks []H
 	go func() { _ = p.ListenAndServe(ctx, logr.Discard()) }()
 	time.Sleep(20 * time.Millisecond) // wait for bind
 	return addr, cancel
+}
+
+// drainUDP reads from conn until it is closed, discarding all data.
+// The caller must close conn to unblock the goroutine.
+func drainUDP(conn *net.UDPConn) chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 65536)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+	return done
 }
 
 // ---- getWorkerIndex ---------------------------------------------------------
@@ -94,13 +118,37 @@ func BenchmarkSessionRefresh(b *testing.B) {
 	}
 }
 
-// ---- end-to-end throughput --------------------------------------------------
+// ---- getOrCreate fast path (hot path allocs) --------------------------------
+
+// BenchmarkGetOrCreate_FastPath measures the common case: a packet arrives from
+// a known client and we return its existing session under a read lock.
+// This should be allocation-free.
+func BenchmarkGetOrCreate_FastPath(b *testing.B) {
+	backend, backendAddr := mustBindUDP(b)
+	defer backend.Close()
+	frontend, _ := mustBindUDP(b)
+	defer frontend.Close()
+
+	sm := newSessionManager(logr.Discard(), backendAddr, frontend, nil, nil, 30*time.Second, 10*time.Second, 0)
+
+	// Pre-create a session so the fast path is always taken.
+	clientAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9001}
+	key := clientAddr.String()
+	_ = sm.getOrCreate(key, clientAddr)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = sm.getOrCreate(key, clientAddr)
+	}
+}
+
+// ---- end-to-end throughput (outbound only) ----------------------------------
 
 // BenchmarkProxyThroughput_NoHooks measures raw packet forwarding rate (packets/s)
 // through a running Proxy with no hooks — pure dispatch overhead.
 func BenchmarkProxyThroughput_NoHooks(b *testing.B) {
 	backendConn, backendAddr := mustBindUDP(b)
-	defer backendConn.Close()
 
 	proxyAddr, cancel := startBenchProxy(b, backendAddr.String(), nil, nil)
 	defer cancel()
@@ -111,19 +159,8 @@ func BenchmarkProxyThroughput_NoHooks(b *testing.B) {
 	}
 	defer client.Close()
 
-	payload := make([]byte, 256)
-	drain := make(chan struct{})
-	go func() {
-		buf := make([]byte, 65536)
-		for {
-			backendConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-			_, err := backendConn.Read(buf)
-			if err != nil {
-				close(drain)
-				return
-			}
-		}
-	}()
+	payload := make([]byte, payloadSize)
+	drain := drainUDP(backendConn)
 
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
@@ -138,22 +175,24 @@ func BenchmarkProxyThroughput_NoHooks(b *testing.B) {
 	b.StopTimer()
 	pkts := float64(b.N) / b.Elapsed().Seconds()
 	b.ReportMetric(pkts, "pkt/s")
-	if pkts < 70000 {
-		b.Errorf("low throughput, only %.0f pkt/s, required at least 70000 pkt/s", pkts)
-	}
+	backendConn.Close()
 	<-drain
+	if pkts < minThroughput {
+		b.Errorf("low throughput, only %.0f pkt/s, required at least %d pkt/s", pkts, minThroughput)
+	}
 }
 
-// BenchmarkProxyThroughput_WithHooks measures the same path but with a
-// realistic framing hook (simulates the encode overhead of the mux write hook).
+// BenchmarkProxyThroughput_WithHooks measures the forwarding rate with a
+// realistic hook that prepends the 8-byte UDPM control frame header — the
+// actual per-packet overhead for framed data in this protocol.
 func BenchmarkProxyThroughput_WithHooks(b *testing.B) {
 	backendConn, backendAddr := mustBindUDP(b)
-	defer backendConn.Close()
 
-	// Simulate the mux wrap hook: prepend a 17-byte V2 header on every reply.
-	fakeHeader := make([]byte, 17)
+	// Simulate the real protocol overhead: prepend the 8-byte UDPM frame header.
+	fakeHeader := make([]byte, 8)
 	readHook := Hook(func(_ *ClientSession, data []byte) ([]byte, error) {
-		return append(fakeHeader, data...), nil
+		out := make([]byte, 0, len(fakeHeader)+len(data))
+		return append(append(out, fakeHeader...), data...), nil
 	})
 
 	proxyAddr, cancel := startBenchProxy(b, backendAddr.String(), nil, []Hook{readHook})
@@ -165,19 +204,8 @@ func BenchmarkProxyThroughput_WithHooks(b *testing.B) {
 	}
 	defer client.Close()
 
-	payload := make([]byte, 256)
-	drain := make(chan struct{})
-	go func() {
-		buf := make([]byte, 65536)
-		for {
-			backendConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-			_, err := backendConn.Read(buf)
-			if err != nil {
-				close(drain)
-				return
-			}
-		}
-	}()
+	payload := make([]byte, payloadSize)
+	drain := drainUDP(backendConn)
 
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
@@ -192,14 +220,15 @@ func BenchmarkProxyThroughput_WithHooks(b *testing.B) {
 	b.StopTimer()
 	pkts := float64(b.N) / b.Elapsed().Seconds()
 	b.ReportMetric(pkts, "pkt/s")
-	if pkts < 70000 {
-		b.Errorf("low throughput, only %.0f pkt/s, required at least 70000 pkt/s", pkts)
-	}
+	backendConn.Close()
 	<-drain
+	if pkts < minThroughput {
+		b.Errorf("low throughput, only %.0f pkt/s, required at least %d pkt/s", pkts, minThroughput)
+	}
 }
 
-// BenchmarkProxyRoundTrip measures the full round-trip latency
-// (client→proxy→backend→proxy→client) for a single packet at a time.
+// BenchmarkProxyRoundTrip measures the full round-trip latency and throughput
+// (client→proxy→backend→proxy→client) one packet at a time.
 func BenchmarkProxyRoundTrip(b *testing.B) {
 	backendConn, backendAddr := mustBindUDP(b)
 	defer backendConn.Close()
@@ -223,23 +252,27 @@ func BenchmarkProxyRoundTrip(b *testing.B) {
 	clientConn, _ := mustBindUDP(b)
 	defer clientConn.Close()
 
-	payload := make([]byte, 64)
+	payload := make([]byte, payloadSize)
 	recvBuf := make([]byte, 65536)
 
-	// Warm up the session so the first timed iteration doesn't pay session-creation cost.
+	// Warm up: establish the session before the timed loop.
 	_, _ = clientConn.WriteTo(payload, proxyAddr)
 	clientConn.SetReadDeadline(time.Now().Add(time.Second))
 	_, _ = clientConn.Read(recvBuf)
 
+	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
 		_, _ = clientConn.WriteTo(payload, proxyAddr)
 		clientConn.SetReadDeadline(time.Now().Add(time.Second))
-		_, err := clientConn.Read(recvBuf)
-		if err != nil {
+		if _, err := clientConn.Read(recvBuf); err != nil {
 			b.Fatal(err)
 		}
 	}
+
+	b.StopTimer()
+	pkts := float64(b.N) / b.Elapsed().Seconds()
+	b.ReportMetric(pkts, "roundtrips/s")
 }

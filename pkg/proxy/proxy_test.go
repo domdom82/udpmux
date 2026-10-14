@@ -76,7 +76,7 @@ var _ = Describe("Proxy (end-to-end)", func() {
 	})
 
 	startProxy := func(writeHooks, readHooks []proxy.Hook) {
-		p := proxy.NewProxy(proxyAddr.String(), backendAddr.String(), 2, 0, 0)
+		p := proxy.NewProxy(proxyAddr.String(), backendAddr.String(), 2, 0, 0, 0)
 		for _, h := range writeHooks {
 			p.AddWriteHook(h)
 		}
@@ -194,5 +194,57 @@ var _ = Describe("DialBackend", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(conn).NotTo(BeNil())
 		defer conn.Close()
+	})
+})
+
+var _ = Describe("per-client session limit", func() {
+	It("enforces the limit using the client IP map, not a linear scan", func() {
+		backendConn, backendAddr := bindUDP()
+		defer backendConn.Close()
+
+		tmp, proxyAddr := bindUDP()
+		tmp.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		stopped := make(chan struct{})
+
+		const limit = 3
+		p := proxy.NewProxy(proxyAddr.String(), backendAddr.String(), 2, 0, 0, limit)
+		go func() {
+			defer close(stopped)
+			_ = p.ListenAndServe(ctx, logr.Discard())
+		}()
+		time.Sleep(30 * time.Millisecond)
+
+		defer func() {
+			cancel()
+			select {
+			case <-stopped:
+			case <-time.After(2 * time.Second):
+			}
+		}()
+
+		// Open limit+2 connections from distinct ports on 127.0.0.1.
+		const total = limit + 2
+		conns := make([]*net.UDPConn, total)
+		for i := range total {
+			c, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+			Expect(err).NotTo(HaveOccurred())
+			conns[i] = c
+		}
+		defer func() {
+			for _, c := range conns {
+				c.Close()
+			}
+		}()
+
+		for _, c := range conns {
+			_, err := c.WriteTo([]byte("ping"), proxyAddr)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		time.Sleep(50 * time.Millisecond)
+
+		Expect(p.NumSessions()).To(BeNumerically("<=", limit),
+			"client IP map must cap sessions without a linear scan over all sessions")
 	})
 })

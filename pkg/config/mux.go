@@ -6,20 +6,11 @@ import (
 )
 
 type UdpMuxConfig struct {
-	ListenAddr      string        // The ip:port the udp mux will listen on for UDP traffic.
-	ApiListenAddr   string        // The ip:port the udp mux will listen on for API traffic.
-	SessionTimeout  time.Duration // How long an idle session lives before being garbage-collected.
-	CleanupInterval time.Duration // How often to check for idle sessions to clean up.
-}
-
-// NewUdpMuxConfig creates a new UdpMuxConfig.
-func NewUdpMuxConfig(listenAddr string, apiListenAddr string, sessionTimeout time.Duration, cleanupInterval time.Duration) *UdpMuxConfig {
-	return &UdpMuxConfig{
-		ListenAddr:      listenAddr,
-		ApiListenAddr:   apiListenAddr,
-		SessionTimeout:  sessionTimeout,
-		CleanupInterval: cleanupInterval,
-	}
+	ListenAddr           string        // The ip:port the udp mux will listen on for UDP traffic.
+	ApiListenAddr        string        // The ip:port the udp mux will listen on for API traffic.
+	SessionTimeout       time.Duration // How long an idle session lives before being garbage-collected.
+	CleanupInterval      time.Duration // How often to check for idle sessions to clean up.
+	MaxSessionsPerClient int           // Max concurrent sessions per client IP (0 = unlimited).
 }
 
 func (cfg *UdpMuxConfig) Validate() error {
@@ -30,15 +21,18 @@ func (cfg *UdpMuxConfig) Validate() error {
 		return err
 	}
 	if cfg.SessionTimeout <= 0 {
-		return fmt.Errorf("session_timeout must be positive")
+		return fmt.Errorf("sessionTimeout must be positive")
 	}
 	if cfg.CleanupInterval <= 0 {
-		return fmt.Errorf("cleanup_interval must be positive")
+		return fmt.Errorf("cleanupInterval must be positive")
+	}
+	if cfg.MaxSessionsPerClient < 0 {
+		return fmt.Errorf("maxSessionsPerClient must be non-negative")
 	}
 	return nil
 }
 
 func (cfg *UdpMuxConfig) String() string {
-	return fmt.Sprintf("UdpMuxConfig{ListenAddr: %s, ApiListenAddr: %s, SessionTimeout: %s, CleanupInterval: %s}",
-		cfg.ListenAddr, cfg.ApiListenAddr, cfg.SessionTimeout, cfg.CleanupInterval)
+	return fmt.Sprintf("UdpMuxConfig{ListenAddr: %s, ApiListenAddr: %s, SessionTimeout: %s, CleanupInterval: %s, MaxSessionsPerClient: %d}",
+		cfg.ListenAddr, cfg.ApiListenAddr, cfg.SessionTimeout, cfg.CleanupInterval, cfg.MaxSessionsPerClient)
 }

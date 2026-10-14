@@ -3,6 +3,7 @@ package proxy
 import (
 	"fmt"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,18 +62,20 @@ func (s *ClientSession) String() string {
 
 // SessionManager maps client addresses to active upstream sessions
 type SessionManager struct {
-	sessions        map[string]*ClientSession
-	mu              sync.RWMutex
-	backend         *net.UDPAddr
-	frontend        *net.UDPConn
-	log             logr.Logger
-	writeHooks      []Hook
-	readHooks       []Hook
-	sessionTimeout  time.Duration
-	cleanupInterval time.Duration
+	sessions             map[string]*ClientSession
+	clientSessions       map[string][]*ClientSession // client IP → sessions; kept in sync with sessions
+	mu                   sync.RWMutex
+	backend              *net.UDPAddr
+	frontend             *net.UDPConn
+	log                  logr.Logger
+	writeHooks           []Hook
+	readHooks            []Hook
+	sessionTimeout       time.Duration
+	cleanupInterval      time.Duration
+	maxSessionsPerClient int // 0 = unlimited
 }
 
-func newSessionManager(log logr.Logger, backend *net.UDPAddr, frontend *net.UDPConn, writeHooks []Hook, readHooks []Hook, sessionTimeout time.Duration, cleanupInterval time.Duration) *SessionManager {
+func newSessionManager(log logr.Logger, backend *net.UDPAddr, frontend *net.UDPConn, writeHooks []Hook, readHooks []Hook, sessionTimeout time.Duration, cleanupInterval time.Duration, maxSessionsPerClient int) *SessionManager {
 	if sessionTimeout <= 0 {
 		sessionTimeout = DefaultSessionTimeout
 	}
@@ -80,14 +83,16 @@ func newSessionManager(log logr.Logger, backend *net.UDPAddr, frontend *net.UDPC
 		cleanupInterval = DefaultSessionCleanupInterval
 	}
 	sm := &SessionManager{
-		sessions:        make(map[string]*ClientSession),
-		backend:         backend,
-		frontend:        frontend,
-		log:             log,
-		writeHooks:      writeHooks,
-		readHooks:       readHooks,
-		sessionTimeout:  sessionTimeout,
-		cleanupInterval: cleanupInterval,
+		sessions:             make(map[string]*ClientSession),
+		clientSessions:       make(map[string][]*ClientSession),
+		backend:              backend,
+		frontend:             frontend,
+		log:                  log,
+		writeHooks:           writeHooks,
+		readHooks:            readHooks,
+		sessionTimeout:       sessionTimeout,
+		cleanupInterval:      cleanupInterval,
+		maxSessionsPerClient: maxSessionsPerClient,
 	}
 	// Start session cleanup worker for idle sessions
 	go sm.cleanupRoutine()
@@ -113,6 +118,15 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 	}
 
 	// Slow path: Create new session
+	// Check per-client session limit before allocating.
+	clientIP := extractIP(clientAddr)
+	if sm.maxSessionsPerClient > 0 {
+		if len(sm.clientSessions[clientIP]) >= sm.maxSessionsPerClient {
+			sm.log.Info("per-client session limit reached, rejecting new session", "client", clientIP, "limit", sm.maxSessionsPerClient)
+			return nil
+		}
+	}
+
 	// Dial upstream backend endpoint for this specific client session if needed
 	var backendConn *net.UDPConn
 	var err error
@@ -137,6 +151,7 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 	session.lastActive.Store(time.Now().UnixNano())
 
 	sm.sessions[key] = session
+	sm.clientSessions[clientIP] = append(sm.clientSessions[clientIP], session)
 
 	// Start duplex loops:
 	// 1. Forwarder: Client -> Proxy -> Backend
@@ -152,13 +167,27 @@ func (sm *SessionManager) remove(key string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	if session, exists := sm.sessions[key]; exists {
-		sm.log.Info("Session expired", "session", session)
-		close(session.done)
-		if session.backendConn != nil {
-			session.backendConn.Close()
+	session, exists := sm.sessions[key]
+	if !exists {
+		return
+	}
+	sm.log.Info("Session expired", "session", session)
+	close(session.done)
+	if session.backendConn != nil {
+		session.backendConn.Close()
+	}
+	delete(sm.sessions, key)
+
+	clientIP := extractIP(session.clientAddr)
+	list := sm.clientSessions[clientIP]
+	for i, s := range list {
+		if s == session {
+			sm.clientSessions[clientIP] = slices.Delete(list, i, i+1)
+			break
 		}
-		delete(sm.sessions, key)
+	}
+	if len(sm.clientSessions[clientIP]) == 0 {
+		delete(sm.clientSessions, clientIP)
 	}
 }
 
@@ -196,6 +225,21 @@ func (s *ClientSession) refresh() {
 // Refresh is the exported equivalent of refresh, for use by protocol hooks.
 func (s *ClientSession) Refresh() {
 	s.refresh()
+}
+
+// Expire marks the session as immediately eligible for cleanup by zeroing lastActive.
+// The cleanup routine will remove it on the next tick.
+func (s *ClientSession) Expire() {
+	s.lastActive.Store(0)
+}
+
+// extractIP returns the host portion of addr.String(), stripping the port.
+func extractIP(addr net.Addr) string {
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return addr.String()
+	}
+	return host
 }
 
 // Full Duplex Loop 1: Proxy -> Backend (Client outbound traffic)

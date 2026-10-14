@@ -27,26 +27,29 @@ type Packet struct {
 }
 
 type Proxy struct {
-	localAddr       string
-	backendAddr     string
-	resolvedAddr    atomic.Value // stores string; set once after ListenAndServe binds
-	workers         int
-	sessionTimeout  time.Duration
-	cleanupInterval time.Duration
-	addrToWorker    map[string]int
-	writeHooks      []Hook
-	readHooks       []Hook
-	sessionMgr      *SessionManager
+	localAddr        string
+	backendAddr      string
+	resolvedAddr     atomic.Value // stores string; set once after ListenAndServe binds
+	workers          int
+	sessionTimeout   time.Duration
+	cleanupInterval  time.Duration
+	maxSessionsPerClient int
+	addrToWorker     map[string]int
+	writeHooks       []Hook
+	readHooks        []Hook
+	sessionMgr       *SessionManager
+	mu               sync.RWMutex
 }
 
-func NewProxy(localAddr string, backendAddr string, workers int, sessionTimeout, cleanupInterval time.Duration) *Proxy {
+func NewProxy(localAddr string, backendAddr string, workers int, sessionTimeout, cleanupInterval time.Duration, maxSessionsPerClient int) *Proxy {
 	p := &Proxy{
-		localAddr:       localAddr,
-		backendAddr:     backendAddr,
-		workers:         workers,
-		sessionTimeout:  sessionTimeout,
-		cleanupInterval: cleanupInterval,
-		addrToWorker:    make(map[string]int),
+		localAddr:        localAddr,
+		backendAddr:      backendAddr,
+		workers:          workers,
+		sessionTimeout:   sessionTimeout,
+		cleanupInterval:  cleanupInterval,
+		maxSessionsPerClient: maxSessionsPerClient,
+		addrToWorker:     make(map[string]int),
 	}
 
 	return p
@@ -63,7 +66,12 @@ func (p *Proxy) AddReadHook(hook Hook) {
 // NumSessions returns the number of currently active client sessions.
 // Returns 0 if the proxy has not started yet.
 func (p *Proxy) NumSessions() int {
-	if p == nil || p.sessionMgr == nil {
+	if p == nil {
+		return 0
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.sessionMgr == nil {
 		return 0
 	}
 	return p.sessionMgr.NumSessions()
@@ -106,16 +114,16 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 	for i := range p.workers {
 		workerChans[i] = make(chan Packet, workerChanCapacity)
 	}
-	sessionMgr := newSessionManager(log, backendAddr, frontendConn, p.writeHooks, p.readHooks, p.sessionTimeout, p.cleanupInterval)
+	sessionMgr := newSessionManager(log, backendAddr, frontendConn, p.writeHooks, p.readHooks, p.sessionTimeout, p.cleanupInterval, p.maxSessionsPerClient)
+	p.mu.Lock()
 	p.sessionMgr = sessionMgr
+	p.mu.Unlock()
 
 	var wg sync.WaitGroup
 	for i := 0; i < p.workers; i++ {
 		wg.Add(1)
 		go worker(log, workerChans[i], sessionMgr, &wg)
 	}
-
-	log.Info("UDP Proxy running", "frontend", p.localAddr, "backend", p.backendAddr, "workers", p.workers)
 
 	// Handle OS signals for graceful shutdown
 	go func() {
@@ -132,6 +140,8 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 		buf := make([]byte, packetBufferSize)
 		ms[i] = ipv4.Message{Buffers: [][]byte{buf}}
 	}
+
+	log.Info("UDP Proxy running", "frontend", p.localAddr, "backend", p.backendAddr, "workers", p.workers)
 
 	for {
 		// Read a batch of packets and push them into the packet channel

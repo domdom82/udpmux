@@ -20,7 +20,7 @@ var (
 	muxAddr         string
 	endpointAddr    string
 	ping            bool
-	pingsize        int
+	pingSize        int
 	sessionTimeout  time.Duration
 	cleanupInterval time.Duration
 )
@@ -38,13 +38,14 @@ func NewCommand() *cobra.Command {
 			}
 			ctx := cmd.Context()
 			cfg := &config.UdpProxyConfig{
-				ListenAddr:      listenAddr,
-				MuxAddr:         muxAddr,
-				EndpointAddr:    endpointAddr,
-				Ping:            ping,
-				PingSize:        pingsize,
-				SessionTimeout:  sessionTimeout,
-				CleanupInterval: cleanupInterval,
+				ListenAddr:           listenAddr,
+				MuxAddr:              muxAddr,
+				EndpointAddr:         endpointAddr,
+				Ping:                 ping,
+				PingSize:             pingSize,
+				SessionTimeout:       sessionTimeout,
+				CleanupInterval:      cleanupInterval,
+				MaxSessionsPerClient: 0, // udp-proxy runs locally, so we don't need to limit sessions per client
 			}
 			return run(ctx, log, cfg)
 		},
@@ -56,8 +57,8 @@ func NewCommand() *cobra.Command {
 	flags.StringVarP(&muxAddr, "muxAddr", "m", "", "UDP Mux address in the format <host>:<port>")
 	flags.StringVarP(&endpointAddr, "endpointAddr", "e", "", "Endpoint address in the format <host>:<port>")
 	flags.BoolVarP(&ping, "ping", "i", false, "If set, the udp proxy will only send pings to the mux.")
-	flags.IntVarP(&pingsize, "size", "s", 0, "Size of the ping payload to send. Only used if ping is set.")
-	flags.DurationVar(&sessionTimeout, "sessionTimeout", 5*time.Minute, "Idle duration before a session is garbage-collected")
+	flags.IntVarP(&pingSize, "pingSize", "s", 0, "Size of the ping payload to send. Only used if ping is set.")
+	flags.DurationVar(&sessionTimeout, "sessionTimeout", 3*time.Minute, "Idle duration before a session is garbage-collected")
 	flags.DurationVar(&cleanupInterval, "cleanupInterval", 10*time.Second, "Interval to check for idle sessions to clean up")
 
 	return cmd

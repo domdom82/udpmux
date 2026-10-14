@@ -10,6 +10,11 @@ import (
 	"github.com/go-logr/logr"
 )
 
+const (
+	muxResetCountTag  = "mux.resetCount"
+	maxResetsPerSession = 3 // bogus sessions are expired after this many consecutive RESETs
+)
+
 // buildMuxHooks returns the write hook for the mux side.
 // The read hook is nil — return traffic from the backend is forwarded raw without any wrapping.
 func buildMuxHooks(log logr.Logger) proxy.Hook {
@@ -19,7 +24,7 @@ func buildMuxHooks(log logr.Logger) proxy.Hook {
 	//   PING: echo back, suppress.
 	// Unknown session: expect PROXY_HELLO.
 	//   PING: echo back, suppress (no session needed).
-	//   other: send RESET, suppress.
+	//   other: send RESET and increment bogus counter; expire session after maxResetsPerSession.
 	write := proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
 		if s.GetBackendConn() != nil {
 			if isControlFrame(data, frame.FlagPing) {
@@ -46,7 +51,12 @@ func buildMuxHooks(log logr.Logger) proxy.Hook {
 			if err := sendControl(s, frame.FlagReset); err != nil {
 				log.Error(err, "failed to send RESET")
 			}
-			log.Info("unknown session, non-HELLO packet received, sent RESET", "session", s)
+			resetCount := incrementResetCount(s)
+			log.Info("unknown session, non-HELLO packet received, sent RESET", "session", s, "resetCount", resetCount)
+			if resetCount >= maxResetsPerSession {
+				log.Info("bogus session expired after repeated RESETs", "session", s)
+				s.Expire()
+			}
 			return nil, fmt.Errorf("unexpected packet on unknown session, RESET sent")
 		}
 
@@ -128,4 +138,17 @@ func parseHelloEndpoint(data []byte) (string, error) {
 		return "", fmt.Errorf("endpoint truncated: need %d bytes, have %d", payloadStart+epLen, len(data))
 	}
 	return string(data[payloadStart : payloadStart+epLen]), nil
+}
+
+// incrementResetCount bumps the per-session RESET counter stored in the session tag
+// and returns the new count.
+func incrementResetCount(s *proxy.ClientSession) int {
+	v := s.GetTag(muxResetCountTag)
+	count := 0
+	if v != nil {
+		count = v.(int)
+	}
+	count++
+	s.SetTag(muxResetCountTag, count)
+	return count
 }

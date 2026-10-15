@@ -25,6 +25,7 @@ type ClientSession struct {
 	frontendConn *net.UDPConn
 	sendChan     chan []byte
 	lastActive   atomic.Int64 // UnixNano; updated without holding mu
+	timeout      int64
 	mu           sync.Mutex
 	done         chan struct{}
 	log          logr.Logger
@@ -57,7 +58,7 @@ func udpConnStr(clientAddr net.Addr, conn *net.UDPConn) string {
 
 func (s *ClientSession) String() string {
 	age := time.Since(time.Unix(0, s.lastActive.Load()))
-	return fmt.Sprintf("frontend %s backend %s age %.2fs", udpConnStr(s.clientAddr, s.frontendConn), udpConnStr(nil, s.backendConn), age.Seconds())
+	return fmt.Sprintf("frontend %s backend %s age %s", udpConnStr(s.clientAddr, s.frontendConn), udpConnStr(nil, s.backendConn), age)
 }
 
 // SessionManager maps client addresses to active upstream sessions
@@ -105,7 +106,7 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 	session, exists := sm.sessions[key]
 	sm.mu.RUnlock()
 
-	if exists {
+	if exists && !session.IsExpired() {
 		return session
 	}
 
@@ -113,7 +114,7 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 	defer sm.mu.Unlock()
 
 	// Double check after acquiring write lock
-	if session, exists = sm.sessions[key]; exists {
+	if session, exists = sm.sessions[key]; exists && !session.IsExpired() {
 		return session
 	}
 
@@ -122,7 +123,7 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 	clientIP := extractIP(clientAddr)
 	if sm.maxSessionsPerClient > 0 {
 		if len(sm.clientSessions[clientIP]) >= sm.maxSessionsPerClient {
-			sm.log.Info("per-client session limit reached, rejecting new session", "client", clientIP, "limit", sm.maxSessionsPerClient)
+			sm.log.Info("Per-client session limit reached, rejecting new session", "client", clientIP, "limit", sm.maxSessionsPerClient)
 			return nil
 		}
 	}
@@ -133,7 +134,7 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 	if sm.backend != nil {
 		backendConn, err = DialBackend(sm.backend)
 		if err != nil {
-			sm.log.Error(err, "failed to dial backend", "client", key)
+			sm.log.Error(err, "Failed to dial backend", "client", key)
 			return nil
 		}
 	}
@@ -147,6 +148,7 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 		log:          sm.log,
 		writeHooks:   sm.writeHooks,
 		readHooks:    sm.readHooks,
+		timeout:      sm.sessionTimeout.Nanoseconds(),
 	}
 	session.lastActive.Store(time.Now().UnixNano())
 
@@ -201,12 +203,10 @@ func (sm *SessionManager) cleanupRoutine() {
 	ticker := time.NewTicker(sm.cleanupInterval)
 	defer ticker.Stop()
 	for range ticker.C {
-		now := time.Now().UnixNano()
-		timeout := sm.sessionTimeout.Nanoseconds()
 		sm.mu.RLock()
 		var expiredKeys []string
 		for key, session := range sm.sessions {
-			if now-session.lastActive.Load() > timeout {
+			if session.IsExpired() {
 				expiredKeys = append(expiredKeys, key)
 			}
 		}
@@ -231,6 +231,12 @@ func (s *ClientSession) Refresh() {
 // The cleanup routine will remove it on the next tick.
 func (s *ClientSession) Expire() {
 	s.lastActive.Store(0)
+}
+
+// IsExpired reports whether the session has expired.
+func (s *ClientSession) IsExpired() bool {
+	now := time.Now().UnixNano()
+	return now-s.lastActive.Load() > s.timeout
 }
 
 // extractIP returns the host portion of addr.String(), stripping the port.

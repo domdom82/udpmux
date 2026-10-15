@@ -17,6 +17,7 @@ const (
 	handshakeRetryInterval = 500 * time.Millisecond
 	bufferSize             = 100
 	proxySessionTag        = "proxy.session"
+	maxHandshakeResets     = 3 // give up after this many consecutive RESETs from the mux
 )
 
 type sessionState int
@@ -33,6 +34,7 @@ type proxySession struct {
 	state        sessionState
 	buffer       [][]byte
 	endpointAddr string
+	resetCount   int // consecutive RESETs received from the mux
 }
 
 func newProxySession(endpointAddr string) *proxySession {
@@ -52,6 +54,19 @@ func (ps *proxySession) getState() sessionState {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	return ps.state
+}
+
+func (ps *proxySession) incResetCount() int {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.resetCount++
+	return ps.resetCount
+}
+
+func (ps *proxySession) clearResetCount() {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.resetCount = 0
 }
 
 func (ps *proxySession) bufferPacket(data []byte) {
@@ -94,20 +109,24 @@ func (ps *proxySession) sendProxyHello(s *proxy.ClientSession) error {
 }
 
 // startHandshake transitions the session to HANDSHAKING and fires PROXY_HELLO retries.
+// It is a no-op if the session is already handshaking.
 func (ps *proxySession) startHandshake(s *proxy.ClientSession, log logr.Logger) {
+	if ps.getState() == stateHandshaking {
+		return
+	}
 	ps.setState(stateHandshaking)
 	go func() {
 		for i := range handshakeRetries {
-			if ps.getState() == stateEstablished {
+			if ps.getState() == stateEstablished || s.IsExpired() {
 				return
 			}
 			if err := ps.sendProxyHello(s); err != nil {
-				log.Error(err, "failed to send PROXY_HELLO", "attempt", i+1)
+				log.Error(err, "Failed to send PROXY_HELLO", "attempt", i+1)
 			}
 			time.Sleep(handshakeRetryInterval)
 		}
 		if ps.getState() != stateEstablished {
-			log.Info("handshake timed out, resetting session")
+			log.Info("Handshake timed out, resetting session")
 			ps.setState(stateIdle)
 			ps.drainBuffer()
 		}
@@ -165,18 +184,18 @@ func buildHooks(cfg *config.UdpProxyConfig, log logr.Logger) (proxy.Hook, proxy.
 			// Not a valid control frame — treat as raw data.
 			return data, nil
 		}
-		return handleControlFromMux(s, h, log, getOrCreate)
+		return handleControlFromMux(s, h, log, getOrCreate(s))
 	})
 
 	return write, read
 }
 
-func handleControlFromMux(s *proxy.ClientSession, h *frame.Header, log logr.Logger, getOrCreate func(*proxy.ClientSession) *proxySession) ([]byte, error) {
+func handleControlFromMux(s *proxy.ClientSession, h *frame.Header, log logr.Logger, ps *proxySession) ([]byte, error) {
 	switch {
 	case h.Flags&frame.FlagMuxHello != 0:
-		ps := getOrCreate(s)
 		ps.setState(stateEstablished)
-		log.Info("session established", "session", s)
+		ps.clearResetCount()
+		log.Info("Session established", "session", s)
 
 		buffered := ps.drainBuffer()
 		if len(buffered) > 0 {
@@ -184,7 +203,7 @@ func handleControlFromMux(s *proxy.ClientSession, h *frame.Header, log logr.Logg
 			if backendConn != nil {
 				for _, pkt := range buffered {
 					if _, err := backendConn.Write(pkt); err != nil {
-						log.Error(err, "failed to flush buffered packet after handshake")
+						log.Error(err, "Failed to flush buffered packet after handshake")
 					}
 				}
 			} else {
@@ -194,8 +213,18 @@ func handleControlFromMux(s *proxy.ClientSession, h *frame.Header, log logr.Logg
 		return nil, nil // consume control frame
 
 	case h.Flags&frame.FlagReset != 0:
-		log.Info("RESET received from mux, re-handshaking", "session", s)
-		ps := getOrCreate(s)
+		count := ps.incResetCount()
+		if ps.getState() == stateHandshaking {
+			if count >= maxHandshakeResets {
+				log.Info("Mux rejected session repeatedly, giving up", "session", s, "resets", count)
+				ps.drainBuffer()
+				s.Expire()
+			}
+			// received RESET while handshaking — ignore, keep retrying handshake
+			return nil, nil
+		}
+
+		log.Info("RESET received from mux, re-handshaking", "session", s, "resets", count)
 		ps.setState(stateIdle)
 		ps.startHandshake(s, log)
 		return nil, nil // consume control frame

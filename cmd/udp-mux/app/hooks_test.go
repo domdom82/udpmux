@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/domdom82/udpmux/pkg/config"
 	"github.com/domdom82/udpmux/pkg/frame"
 	"github.com/domdom82/udpmux/pkg/proxy"
 )
@@ -53,6 +54,18 @@ func isFlagSet(data []byte, flag uint16) bool {
 	return binary.BigEndian.Uint16(data[4:6])&flag != 0
 }
 
+// openCfg returns a validated UdpMuxConfig with no allow-list restrictions.
+func openCfg() *config.UdpMuxConfig {
+	cfg := &config.UdpMuxConfig{
+		ListenAddr:      ":0",
+		ApiListenAddr:   ":0",
+		SessionTimeout:  30 * time.Second,
+		CleanupInterval: 10 * time.Second,
+	}
+	Expect(cfg.Validate()).To(Succeed())
+	return cfg
+}
+
 var _ = Describe("mux-side protocol", func() {
 	var (
 		backendConn *net.UDPConn
@@ -79,7 +92,7 @@ var _ = Describe("mux-side protocol", func() {
 		stopped = make(chan struct{})
 
 		p := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, 2)
-		unwrap := buildMuxHooks(logr.Discard())
+		unwrap := buildMuxHooks(logr.Discard(), openCfg())
 		p.AddWriteHook(unwrap)
 
 		go func() {
@@ -164,7 +177,7 @@ var _ = Describe("mux-side protocol", func() {
 		stopped2 := make(chan struct{})
 		defer cancel2()
 		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, 2)
-		p2.AddWriteHook(buildMuxHooks(logr.Discard()))
+		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg()))
 		go func() {
 			defer close(stopped2)
 			_ = p2.ListenAndServe(ctx2, logr.Discard())
@@ -216,7 +229,7 @@ var _ = Describe("mux-side protocol", func() {
 		stopped2 := make(chan struct{})
 		defer cancel2()
 		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 50*time.Millisecond, 0)
-		p2.AddWriteHook(buildMuxHooks(logr.Discard()))
+		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg()))
 		go func() {
 			defer close(stopped2)
 			_ = p2.ListenAndServe(ctx2, logr.Discard())
@@ -260,7 +273,7 @@ var _ = Describe("mux-side protocol", func() {
 		stopped2 := make(chan struct{})
 		defer cancel2()
 		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, limit)
-		p2.AddWriteHook(buildMuxHooks(logr.Discard()))
+		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg()))
 		go func() {
 			defer close(stopped2)
 			_ = p2.ListenAndServe(ctx2, logr.Discard())
@@ -295,3 +308,82 @@ var _ = Describe("mux-side protocol", func() {
 	})
 
 })
+
+var _ = Describe("endpoint allow-list", func() {
+	var (
+		backendConn *net.UDPConn
+		backendAddr *net.UDPAddr
+		muxAddr     *net.UDPAddr
+		proxyConn   *net.UDPConn
+		ctx         context.Context
+		cancel      context.CancelFunc
+		stopped     chan struct{}
+	)
+
+	startMuxWithAllowList := func(patterns []string) {
+		cfg := &config.UdpMuxConfig{
+			ListenAddr:        muxAddr.String(),
+			ApiListenAddr:     ":0",
+			SessionTimeout:    30 * time.Second,
+			CleanupInterval:   10 * time.Second,
+			EndpointAllowList: patterns,
+		}
+		Expect(cfg.Validate()).To(Succeed())
+
+		p := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, 0)
+		p.AddWriteHook(buildMuxHooks(logr.Discard(), cfg))
+
+		ctx, cancel = context.WithCancel(context.Background())
+		stopped = make(chan struct{})
+		go func() {
+			defer close(stopped)
+			_ = p.ListenAndServe(ctx, logr.Discard())
+		}()
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	BeforeEach(func() {
+		backendConn, backendAddr = bindTestUDP()
+		tmp, addr := bindTestUDP()
+		tmp.Close()
+		muxAddr = addr
+		proxyConn, _ = bindTestUDP()
+	})
+
+	AfterEach(func() {
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+		}
+		backendConn.Close()
+		proxyConn.Close()
+	})
+
+	It("allows an endpoint matching a pattern in the allow-list", func() {
+		// Pattern matches 127.0.0.1:<any port>
+		startMuxWithAllowList([]string{`^127\.0\.0\.1:\d+$`})
+
+		hello := buildProxyHello(backendAddr.String())
+		_, err := proxyConn.WriteTo(hello, muxAddr)
+		Expect(err).NotTo(HaveOccurred())
+
+		reply, _, ok := readWithTimeout(proxyConn, time.Second)
+		Expect(ok).To(BeTrue(), "expected MUX_HELLO for allowed endpoint")
+		Expect(isFlagSet(reply, frame.FlagMuxHello)).To(BeTrue())
+	})
+
+	It("sends RESET for an endpoint not matching any allow-list pattern", func() {
+		// Pattern only matches 10.x.x.x addresses — backend is 127.0.0.1, so it must be rejected.
+		startMuxWithAllowList([]string{`^10\.\d+\.\d+\.\d+:\d+$`})
+
+		hello := buildProxyHello(backendAddr.String())
+		_, err := proxyConn.WriteTo(hello, muxAddr)
+		Expect(err).NotTo(HaveOccurred())
+
+		reply, _, ok := readWithTimeout(proxyConn, time.Second)
+		Expect(ok).To(BeTrue(), "expected RESET for denied endpoint")
+		Expect(isFlagSet(reply, frame.FlagReset)).To(BeTrue())
+	})
+})
+

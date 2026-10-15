@@ -57,6 +57,23 @@ var _ = Describe("UdpMuxConfig", func() {
 			Expect(cfg.Validate()).To(HaveOccurred())
 			Expect(cfg.Validate().Error()).To(ContainSubstring("cleanupInterval"))
 		})
+
+		It("passes with a valid endpointAllowList", func() {
+			cfg.EndpointAllowList = []string{`^10\.0\.0\.\d+:1194$`, `^127\.0\.0\.1:\d+$`}
+			Expect(cfg.Validate()).To(Succeed())
+		})
+
+		It("fails with an invalid regexp in endpointAllowList", func() {
+			cfg.EndpointAllowList = []string{`[invalid`}
+			Expect(cfg.Validate()).To(HaveOccurred())
+			Expect(cfg.Validate().Error()).To(ContainSubstring("endpointAllowList"))
+		})
+
+		It("exposes compiled patterns via CompiledAllowList after Validate", func() {
+			cfg.EndpointAllowList = []string{`^127\.0\.0\.1:\d+$`}
+			Expect(cfg.Validate()).To(Succeed())
+			Expect(cfg.CompiledAllowList()).To(HaveLen(1))
+		})
 	})
 })
 

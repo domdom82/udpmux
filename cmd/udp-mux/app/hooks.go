@@ -4,33 +4,35 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"regexp"
 
+	"github.com/domdom82/udpmux/pkg/config"
 	"github.com/domdom82/udpmux/pkg/frame"
 	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/go-logr/logr"
 )
 
 const (
-	muxResetCountTag  = "mux.resetCount"
-	maxResetsPerSession = 3 // bogus sessions are expired after this many consecutive RESETs
+	muxResetCountTag    = "mux.resetCount"
+	maxResetsPerSession = 3 // sessions are expired after this many RESETs
 )
 
 // buildMuxHooks returns the write hook for the mux side.
 // The read hook is nil — return traffic from the backend is forwarded raw without any wrapping.
-func buildMuxHooks(log logr.Logger) proxy.Hook {
+func buildMuxHooks(log logr.Logger, cfg *config.UdpMuxConfig) proxy.Hook {
 	// write: proxy→backend direction.
 	//
 	// Known session (backend conn exists): forward raw data.
 	//   PING: echo back, suppress.
 	// Unknown session: expect PROXY_HELLO.
 	//   PING: echo back, suppress (no session needed).
-	//   other: send RESET and increment bogus counter; expire session after maxResetsPerSession.
+	//   other: send RESET; expire session after maxResetsPerSession.
 	write := proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
 		if s.GetBackendConn() != nil {
 			if isControlFrame(data, frame.FlagPing) {
 				log.Info("PING received from proxy", "session", s, "len", len(data))
 				if err := sendRaw(s, data); err != nil {
-					log.Error(err, "failed to echo PING")
+					log.Error(err, "Failed to echo PING")
 				}
 				return nil, nil // consume ping
 			}
@@ -42,55 +44,49 @@ func buildMuxHooks(log logr.Logger) proxy.Hook {
 		if isControlFrame(data, frame.FlagPing) {
 			log.Info("PING received from proxy", "session", s, "len", len(data))
 			if err := sendRaw(s, data); err != nil {
-				log.Error(err, "failed to echo PING on unknown session")
+				log.Error(err, "Failed to echo PING on unknown session")
 			}
 			return nil, nil
 		}
 
 		if !isControlFrame(data, frame.FlagProxyHello) {
-			if err := sendControl(s, frame.FlagReset); err != nil {
-				log.Error(err, "failed to send RESET")
-			}
-			resetCount := incrementResetCount(s)
-			log.Info("unknown session, non-HELLO packet received, sent RESET", "session", s, "resetCount", resetCount)
-			if resetCount >= maxResetsPerSession {
-				log.Info("bogus session expired after repeated RESETs", "session", s)
-				s.Expire()
-			}
+			sendReset(log, s)
 			return nil, fmt.Errorf("unexpected packet on unknown session, RESET sent")
 		}
 
 		// Parse PROXY_HELLO.
 		endpointStr, err := parseHelloEndpoint(data)
 		if err != nil {
-			if sendErr := sendControl(s, frame.FlagReset); sendErr != nil {
-				log.Error(sendErr, "failed to send RESET after bad HELLO")
-			}
+			sendReset(log, s)
 			return nil, fmt.Errorf("malformed PROXY_HELLO: %w", err)
+		}
+
+		// Check endpoint against allow-list.
+		if patterns := cfg.CompiledAllowList(); len(patterns) > 0 {
+			if !matchesAny(endpointStr, patterns) {
+				sendReset(log, s)
+				return nil, fmt.Errorf("endpoint '%s' not in allow list", endpointStr)
+			}
 		}
 
 		// Dial backend.
 		backendAddr, err := net.ResolveUDPAddr("udp", endpointStr)
 		if err != nil {
-			if sendErr := sendControl(s, frame.FlagReset); sendErr != nil {
-				log.Error(sendErr, "failed to send RESET after bad endpoint")
-			}
+			sendReset(log, s)
 			return nil, fmt.Errorf("invalid backend endpoint '%s': %w", endpointStr, err)
 		}
 		backendConn, err := proxy.DialBackend(backendAddr)
 		if err != nil {
-			if sendErr := sendControl(s, frame.FlagReset); sendErr != nil {
-				log.Error(sendErr, "failed to send RESET after dial failure")
-			}
+			sendReset(log, s)
 			return nil, fmt.Errorf("failed to dial backend '%s': %w", endpointStr, err)
 		}
 
 		s.SetBackendConn(backendConn)
 
 		if err := sendControl(s, frame.FlagMuxHello); err != nil {
-			log.Error(err, "failed to send MUX_HELLO")
+			log.Error(err, "Failed to send MUX_HELLO")
 		}
-		log.Info("session established", "session", s, "endpoint", endpointStr)
+		log.Info("Session established", "session", s, "endpoint", endpointStr)
 
 		return nil, nil // consume PROXY_HELLO
 	})
@@ -140,9 +136,12 @@ func parseHelloEndpoint(data []byte) (string, error) {
 	return string(data[payloadStart : payloadStart+epLen]), nil
 }
 
-// incrementResetCount bumps the per-session RESET counter stored in the session tag
-// and returns the new count.
-func incrementResetCount(s *proxy.ClientSession) int {
+// sendReset sends a RESET control frame to the proxy, increments the per-session
+// reset counter, and expires the session once maxResetsPerSession is reached.
+func sendReset(log logr.Logger, s *proxy.ClientSession) {
+	if err := sendControl(s, frame.FlagReset); err != nil {
+		log.Error(err, "Failed to send RESET")
+	}
 	v := s.GetTag(muxResetCountTag)
 	count := 0
 	if v != nil {
@@ -150,5 +149,19 @@ func incrementResetCount(s *proxy.ClientSession) int {
 	}
 	count++
 	s.SetTag(muxResetCountTag, count)
-	return count
+	log.Info("RESET sent", "session", s, "resetCount", count)
+	if count >= maxResetsPerSession {
+		log.Info("Session expired after repeated RESETs", "session", s)
+		s.Expire()
+	}
+}
+
+// matchesAny reports whether s matches any of the given compiled patterns.
+func matchesAny(s string, patterns []*regexp.Regexp) bool {
+	for _, re := range patterns {
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	return false
 }

@@ -22,6 +22,7 @@ var (
 	sessionTimeout       time.Duration
 	cleanupInterval      time.Duration
 	maxSessionsPerClient int
+	endpointAllowList    []string
 )
 
 // NewCommand creates a new cobra.Command for running udp-mux.
@@ -42,6 +43,7 @@ func NewCommand() *cobra.Command {
 				SessionTimeout:       sessionTimeout,
 				CleanupInterval:      cleanupInterval,
 				MaxSessionsPerClient: maxSessionsPerClient,
+				EndpointAllowList:    endpointAllowList,
 			}
 			cfg.MaxSessionsPerClient = maxSessionsPerClient
 			return run(ctx, log, cfg)
@@ -55,6 +57,7 @@ func NewCommand() *cobra.Command {
 	flags.DurationVar(&sessionTimeout, "sessionTimeout", 5*time.Minute, "Idle duration before a session is garbage-collected")
 	flags.DurationVar(&cleanupInterval, "cleanupInterval", 10*time.Second, "Interval to check for idle sessions to clean up")
 	flags.IntVar(&maxSessionsPerClient, "maxSessionsPerClient", 10, "Max concurrent sessions per client IP (0 = unlimited)")
+	flags.StringArrayVar(&endpointAllowList, "endpointAllowList", nil, "Allowed backend endpoint patterns (regular expressions, repeatable); empty = allow all")
 	return cmd
 }
 

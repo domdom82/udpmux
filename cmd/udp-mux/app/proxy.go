@@ -9,6 +9,6 @@ import (
 )
 
 func runProxy(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig, p *proxy.Proxy) error {
-	p.AddWriteHook(buildMuxHooks(log, cfg))
+	p.AddWriteHook(buildMuxHooks(log, cfg, p))
 	return p.ListenAndServe(ctx, log)
 }

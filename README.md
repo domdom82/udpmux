@@ -24,7 +24,7 @@ Server-side component. Listens on a single UDP port and multiplexes traffic to m
 It identifies sessions by the client's source address: unknown source triggers a PROXY_HELLO
 handshake (which carries the target backend endpoint); known source means the packet is forwarded
 raw to the backend. Replies from the backend are sent back to the proxy raw. Also serves an HTTP
-API on `:8081` (`GET /api/sessions`, `GET /healthz`, `GET /readyz`).
+API on `:8081` (`GET /metrics`, `GET /healthz`, `GET /readyz`).
 
 ## Framing protocol
 
@@ -106,16 +106,16 @@ must be escaped if you intend them as literals.
 udp-proxy [flags]
 ```
 
-| Flag | Short | Default | Description |
-|---|---|---|---|
-| `--listenAddr` | `-l` | `:7070` | UDP address to listen on for client traffic |
-| `--muxAddr` | `-m` | _(required)_ | Address of the udp-mux in `host:port` form |
-| `--endpointAddr` | `-e` | _(required unless `--ping`)_ | Backend endpoint the mux should forward to, in `host:port` form |
-| `--ping` | `-i` | `false` | Send PING frames to the mux instead of establishing data sessions |
-| `--pingSize` | `-s` | `0` | Extra payload bytes to include in each PING frame |
-| `--sessionTimeout` | | `3m` | Idle duration before a session is garbage-collected |
-| `--cleanupInterval` | | `10s` | How often to scan for idle sessions to remove |
-| `--version` | | | Print version and exit |
+| Flag                | Short | Default                      | Description                                                       |
+|---------------------|-------|------------------------------|-------------------------------------------------------------------|
+| `--listenAddr`      | `-l`  | `:7070`                      | UDP address to listen on for client traffic                       |
+| `--muxAddr`         | `-m`  | _(required)_                 | Address of the udp-mux in `host:port` form                        |
+| `--endpointAddr`    | `-e`  | _(required unless `--ping`)_ | Backend endpoint the mux should forward to, in `host:port` form   |
+| `--ping`            | `-i`  | `false`                      | Send PING frames to the mux instead of establishing data sessions |
+| `--pingSize`        | `-s`  | `0`                          | Extra payload bytes to include in each PING frame                 |
+| `--sessionTimeout`  |       | `3m`                         | Idle duration before a session is garbage-collected               |
+| `--cleanupInterval` |       | `10s`                        | How often to scan for idle sessions to remove                     |
+| `--version`         |       |                              | Print version and exit                                            |
 
 #### Ping mode (`--ping`)
 
@@ -127,10 +127,37 @@ which can help detect MTU issues.
 
 ## HTTP API (`udp-mux`)
 
-The mux exposes a small HTTP API on `--apiListenAddr` (default `:8081`):
+The mux exposes an HTTP API on `--apiListenAddr` (default `:8081`):
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/sessions` | Returns the number of currently active sessions |
-| `GET /healthz` | Liveness probe — always `200 OK` when the process is up |
-| `GET /readyz` | Readiness probe — `200 OK` once the proxy is ready to serve |
+| Endpoint       | Description                                                 |
+|----------------|-------------------------------------------------------------|
+| `GET /metrics` | Prometheus metrics (see below)                              |
+| `GET /healthz` | Liveness probe — always `200 OK` when the process is up     |
+| `GET /readyz`  | Readiness probe — `200 OK` once the proxy is ready to serve |
+
+### Metrics (`GET /metrics`)
+
+The `/metrics` endpoint exposes Prometheus-compatible metrics in the standard text format.
+
+#### Gauges
+
+| Metric                           | Description                                                                                |
+|----------------------------------|--------------------------------------------------------------------------------------------|
+| `udpmux_sessions`                | Number of currently active client sessions                                                 |
+| `udpmux_clients`                 | Number of distinct client IPs with at least one active session                             |
+| `udpmux_avg_sessions_per_client` | Average sessions per client IP, rounded up (`ceil`). Useful for determining session limits |
+
+#### Counters
+
+| Metric                                               | Description                                                                                             |
+|------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| `udpmux_sessions_expired_total`                      | Sessions removed due to inactivity timeout                                                              |
+| `udpmux_sessions_reset_total`                        | RESET frames sent to proxies (each RESET increments by 1)                                               |
+| `udpmux_bogus_sessions_total`                        | Packets received on an unknown session that were not a valid PROXY_HELLO or PING                        |
+| `udpmux_failed_handshakes_total`                     | PROXY_HELLO frames rejected due to a malformed payload or unreachable backend                           |
+| `udpmux_clients_blocked_by_session_limit_total`      | PROXY_HELLO frames rejected because the per-client session limit (`--maxSessionsPerClient`) was reached |
+| `udpmux_clients_blocked_by_endpoint_allowlist_total` | PROXY_HELLO frames rejected because the requested backend was not in the endpoint allow list            |
+| `udpmux_frontend_bytes_read_total`                   | Bytes received from proxies on the frontend UDP socket                                                  |
+| `udpmux_frontend_bytes_written_total`                | Bytes sent back to proxies from the frontend UDP socket (backend replies + control frames)              |
+| `udpmux_backend_bytes_written_total`                 | Bytes forwarded from proxies to backend endpoints                                                       |
+| `udpmux_backend_bytes_read_total`                    | Bytes received from backend endpoints                                                                   |

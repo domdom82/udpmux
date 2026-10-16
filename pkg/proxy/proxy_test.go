@@ -244,7 +244,7 @@ var _ = Describe("per-client session limit", func() {
 		}
 		time.Sleep(50 * time.Millisecond)
 
-		Expect(p.NumSessions()).To(BeNumerically("<=", limit),
+		Expect(p.GetMetrics().SessionsGauge.Load()).To(BeNumerically("<=", int64(limit)),
 			"client IP map must cap sessions without a linear scan over all sessions")
 	})
 })

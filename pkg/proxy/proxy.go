@@ -27,29 +27,29 @@ type Packet struct {
 }
 
 type Proxy struct {
-	localAddr        string
-	backendAddr      string
-	resolvedAddr     atomic.Value // stores string; set once after ListenAndServe binds
-	workers          int
-	sessionTimeout   time.Duration
-	cleanupInterval  time.Duration
+	localAddr            string
+	backendAddr          string
+	resolvedAddr         atomic.Value // stores string; set once after ListenAndServe binds
+	workers              int
+	sessionTimeout       time.Duration
+	cleanupInterval      time.Duration
 	maxSessionsPerClient int
-	addrToWorker     map[string]int
-	writeHooks       []Hook
-	readHooks        []Hook
-	sessionMgr       *SessionManager
-	mu               sync.RWMutex
+	addrToWorker         map[string]int
+	writeHooks           []Hook
+	readHooks            []Hook
+	sessionMgr           *SessionManager
+	mu                   sync.RWMutex
 }
 
 func NewProxy(localAddr string, backendAddr string, workers int, sessionTimeout, cleanupInterval time.Duration, maxSessionsPerClient int) *Proxy {
 	p := &Proxy{
-		localAddr:        localAddr,
-		backendAddr:      backendAddr,
-		workers:          workers,
-		sessionTimeout:   sessionTimeout,
-		cleanupInterval:  cleanupInterval,
+		localAddr:            localAddr,
+		backendAddr:          backendAddr,
+		workers:              workers,
+		sessionTimeout:       sessionTimeout,
+		cleanupInterval:      cleanupInterval,
 		maxSessionsPerClient: maxSessionsPerClient,
-		addrToWorker:     make(map[string]int),
+		addrToWorker:         make(map[string]int),
 	}
 
 	return p
@@ -63,18 +63,28 @@ func (p *Proxy) AddReadHook(hook Hook) {
 	p.readHooks = append(p.readHooks, hook)
 }
 
-// NumSessions returns the number of currently active client sessions.
-// Returns 0 if the proxy has not started yet.
-func (p *Proxy) NumSessions() int {
+func (p *Proxy) GetMetrics() *SessionMetrics {
 	if p == nil {
-		return 0
+		return nil
 	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.sessionMgr == nil {
-		return 0
+		return nil
 	}
-	return p.sessionMgr.NumSessions()
+	return p.sessionMgr.GetMetrics()
+}
+
+func (p *Proxy) UpdateMetrics(fn func(*SessionMetrics)) {
+	if p == nil {
+		return
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.sessionMgr == nil {
+		return
+	}
+	fn(p.sessionMgr.GetMetrics())
 }
 
 func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {

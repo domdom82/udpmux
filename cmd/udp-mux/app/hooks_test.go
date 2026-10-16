@@ -92,7 +92,7 @@ var _ = Describe("mux-side protocol", func() {
 		stopped = make(chan struct{})
 
 		p := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, 2)
-		unwrap := buildMuxHooks(logr.Discard(), openCfg())
+		unwrap := buildMuxHooks(logr.Discard(), openCfg(), p)
 		p.AddWriteHook(unwrap)
 
 		go func() {
@@ -177,7 +177,7 @@ var _ = Describe("mux-side protocol", func() {
 		stopped2 := make(chan struct{})
 		defer cancel2()
 		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, 2)
-		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg()))
+		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg(), p2))
 		go func() {
 			defer close(stopped2)
 			_ = p2.ListenAndServe(ctx2, logr.Discard())
@@ -229,7 +229,7 @@ var _ = Describe("mux-side protocol", func() {
 		stopped2 := make(chan struct{})
 		defer cancel2()
 		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 50*time.Millisecond, 0)
-		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg()))
+		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg(), p2))
 		go func() {
 			defer close(stopped2)
 			_ = p2.ListenAndServe(ctx2, logr.Discard())
@@ -258,7 +258,7 @@ var _ = Describe("mux-side protocol", func() {
 		// Wait for several cleanup ticks to ensure all expired sessions are reaped.
 		time.Sleep(500 * time.Millisecond)
 
-		Expect(p2.NumSessions()).To(Equal(0), "all bogus sessions should have been expired and reaped")
+		Expect(p2.GetMetrics().SessionsGauge.Load()).To(Equal(int64(0)), "all bogus sessions should have been expired and reaped")
 	})
 
 	It("rejects sessions beyond the per-client limit", func() {
@@ -273,7 +273,7 @@ var _ = Describe("mux-side protocol", func() {
 		stopped2 := make(chan struct{})
 		defer cancel2()
 		p2 := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, limit)
-		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg()))
+		p2.AddWriteHook(buildMuxHooks(logr.Discard(), openCfg(), p2))
 		go func() {
 			defer close(stopped2)
 			_ = p2.ListenAndServe(ctx2, logr.Discard())
@@ -304,7 +304,7 @@ var _ = Describe("mux-side protocol", func() {
 		}
 
 		Expect(accepted).To(Equal(limit), "only limit sessions should be accepted; excess must be silently dropped")
-		Expect(p2.NumSessions()).To(BeNumerically("<=", limit))
+		Expect(p2.GetMetrics().SessionsGauge.Load()).To(BeNumerically("<=", int64(limit)))
 	})
 
 })
@@ -331,7 +331,7 @@ var _ = Describe("endpoint allow-list", func() {
 		Expect(cfg.Validate()).To(Succeed())
 
 		p := proxy.NewProxy(muxAddr.String(), "", 2, 30*time.Second, 10*time.Second, 0)
-		p.AddWriteHook(buildMuxHooks(logr.Discard(), cfg))
+		p.AddWriteHook(buildMuxHooks(logr.Discard(), cfg, p))
 
 		ctx, cancel = context.WithCancel(context.Background())
 		stopped = make(chan struct{})
@@ -386,4 +386,3 @@ var _ = Describe("endpoint allow-list", func() {
 		Expect(isFlagSet(reply, frame.FlagReset)).To(BeTrue())
 	})
 })
-

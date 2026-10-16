@@ -61,6 +61,22 @@ func (s *ClientSession) String() string {
 	return fmt.Sprintf("frontend %s backend %s age %s", udpConnStr(s.clientAddr, s.frontendConn), udpConnStr(nil, s.backendConn), age)
 }
 
+// SessionMetrics holds counters and gauges for session management
+type SessionMetrics struct {
+	SessionsGauge                            atomic.Int64
+	ClientsGauge                             atomic.Int64
+	SessionsExpiredCounter                   atomic.Int64
+	SessionsResetCounter                     atomic.Int64
+	BogusSessionsCounter                     atomic.Int64
+	FailedHandshakesCounter                  atomic.Int64
+	ClientsBlockedBySessionLimitCounter      atomic.Int64
+	ClientsBlockedByEndpointAllowlistCounter atomic.Int64
+	FrontendBytesReadCounter                 atomic.Int64
+	FrontendBytesWrittenCounter              atomic.Int64
+	BackendBytesReadCounter                  atomic.Int64
+	BackendBytesWrittenCounter               atomic.Int64
+}
+
 // SessionManager maps client addresses to active upstream sessions
 type SessionManager struct {
 	sessions             map[string]*ClientSession
@@ -74,6 +90,7 @@ type SessionManager struct {
 	sessionTimeout       time.Duration
 	cleanupInterval      time.Duration
 	maxSessionsPerClient int // 0 = unlimited
+	metrics              SessionMetrics
 }
 
 func newSessionManager(log logr.Logger, backend *net.UDPAddr, frontend *net.UDPConn, writeHooks []Hook, readHooks []Hook, sessionTimeout time.Duration, cleanupInterval time.Duration, maxSessionsPerClient int) *SessionManager {
@@ -124,6 +141,7 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 	if sm.maxSessionsPerClient > 0 {
 		if len(sm.clientSessions[clientIP]) >= sm.maxSessionsPerClient {
 			sm.log.Info("Per-client session limit reached, rejecting new session", "client", clientIP, "limit", sm.maxSessionsPerClient)
+			sm.metrics.ClientsBlockedBySessionLimitCounter.Add(1)
 			return nil
 		}
 	}
@@ -135,6 +153,7 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 		backendConn, err = DialBackend(sm.backend)
 		if err != nil {
 			sm.log.Error(err, "Failed to dial backend", "client", key)
+			sm.metrics.FailedHandshakesCounter.Add(1)
 			return nil
 		}
 	}
@@ -155,11 +174,14 @@ func (sm *SessionManager) getOrCreate(key string, clientAddr net.Addr) *ClientSe
 	sm.sessions[key] = session
 	sm.clientSessions[clientIP] = append(sm.clientSessions[clientIP], session)
 
+	sm.metrics.SessionsGauge.Store(int64(len(sm.sessions)))
+	sm.metrics.ClientsGauge.Store(int64(len(sm.clientSessions)))
+
 	// Start duplex loops:
 	// 1. Forwarder: Client -> Proxy -> Backend
 	// 2. Receiver: Backend -> Proxy -> Client
-	go session.writeToBackendLoop()
-	go session.readFromBackendLoop()
+	go session.writeToBackendLoop(sm)
+	go session.readFromBackendLoop(sm)
 
 	sm.log.Info("Session created", "session", session)
 	return session
@@ -175,8 +197,8 @@ func (sm *SessionManager) remove(key string) {
 	}
 	sm.log.Info("Session expired", "session", session)
 	close(session.done)
-	if session.backendConn != nil {
-		session.backendConn.Close()
+	if conn := session.GetBackendConn(); conn != nil {
+		conn.Close()
 	}
 	delete(sm.sessions, key)
 
@@ -191,12 +213,9 @@ func (sm *SessionManager) remove(key string) {
 	if len(sm.clientSessions[clientIP]) == 0 {
 		delete(sm.clientSessions, clientIP)
 	}
-}
 
-func (sm *SessionManager) NumSessions() int {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return len(sm.sessions)
+	sm.metrics.SessionsGauge.Store(int64(len(sm.sessions)))
+	sm.metrics.ClientsGauge.Store(int64(len(sm.clientSessions)))
 }
 
 func (sm *SessionManager) cleanupRoutine() {
@@ -213,9 +232,14 @@ func (sm *SessionManager) cleanupRoutine() {
 		sm.mu.RUnlock()
 
 		for _, key := range expiredKeys {
+			sm.metrics.SessionsExpiredCounter.Add(1)
 			sm.remove(key)
 		}
 	}
+}
+
+func (sm *SessionManager) GetMetrics() *SessionMetrics {
+	return &sm.metrics
 }
 
 func (s *ClientSession) refresh() {
@@ -249,7 +273,7 @@ func extractIP(addr net.Addr) string {
 }
 
 // Full Duplex Loop 1: Proxy -> Backend (Client outbound traffic)
-func (s *ClientSession) writeToBackendLoop() {
+func (s *ClientSession) writeToBackendLoop(sm *SessionManager) {
 	for {
 		select {
 		case <-s.done:
@@ -258,6 +282,7 @@ func (s *ClientSession) writeToBackendLoop() {
 			if !ok {
 				return
 			}
+			sm.metrics.FrontendBytesReadCounter.Add(int64(len(data)))
 			// Hand off to hooks if any
 			var err error
 			for _, hook := range s.writeHooks {
@@ -276,17 +301,18 @@ func (s *ClientSession) writeToBackendLoop() {
 				s.log.Error(err, "Missing backend connection", "session", s)
 				continue
 			}
-			_, err = conn.Write(data)
+			n, err := conn.Write(data)
 			if err != nil {
 				s.log.Error(err, "Failed sending packet to backend", "session", s)
 				continue
 			}
+			sm.metrics.BackendBytesWrittenCounter.Add(int64(n))
 		}
 	}
 }
 
 // Full Duplex Loop 2: Backend -> Proxy -> Client (Return traffic)
-func (s *ClientSession) readFromBackendLoop() {
+func (s *ClientSession) readFromBackendLoop(sm *SessionManager) {
 	buf := make([]byte, packetBufferSize)
 	for {
 		select {
@@ -303,6 +329,7 @@ func (s *ClientSession) readFromBackendLoop() {
 			if err != nil {
 				return // Closed socket or session expired
 			}
+			sm.metrics.BackendBytesReadCounter.Add(int64(n))
 			// Hand off to hooks if any
 			data := buf[:n]
 			for _, hook := range s.readHooks {
@@ -317,10 +344,12 @@ func (s *ClientSession) readFromBackendLoop() {
 			}
 			s.refresh()
 			// Forward return packet back to original client via frontend socket
-			_, err = s.frontendConn.WriteTo(data, s.clientAddr)
+			n, err = s.frontendConn.WriteTo(data, s.clientAddr)
 			if err != nil {
 				s.log.Error(err, "Failed returning packet to client", "session", s)
 			}
+			sm.metrics.FrontendBytesWrittenCounter.Add(int64(n))
+
 		}
 	}
 }

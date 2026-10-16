@@ -15,8 +15,7 @@ func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfi
 	mux := http.NewServeMux()
 	addHealth(log, cfg, mux)
 	addReadiness(log, mux)
-	addMetrics(log, cfg, mux)
-	addApi(log, p, mux)
+	_ = addMetrics(log, p, mux)
 
 	// pprof: forward /debug/pprof/* to the default mux where the import above registered them.
 	mux.Handle("/debug/pprof/", http.DefaultServeMux)
@@ -35,5 +34,5 @@ func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfi
 		_ = httpServer.Shutdown(context.Background())
 	}()
 
-	return httpServer.ListenAndServe() //TODO: add TLS
+	return httpServer.ListenAndServe()
 }

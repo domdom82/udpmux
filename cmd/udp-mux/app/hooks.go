@@ -19,7 +19,7 @@ const (
 
 // buildMuxHooks returns the write hook for the mux side.
 // The read hook is nil — return traffic from the backend is forwarded raw without any wrapping.
-func buildMuxHooks(log logr.Logger, cfg *config.UdpMuxConfig) proxy.Hook {
+func buildMuxHooks(log logr.Logger, cfg *config.UdpMuxConfig, p *proxy.Proxy) proxy.Hook {
 	// write: proxy→backend direction.
 	//
 	// Known session (backend conn exists): forward raw data.
@@ -28,12 +28,19 @@ func buildMuxHooks(log logr.Logger, cfg *config.UdpMuxConfig) proxy.Hook {
 	//   PING: echo back, suppress (no session needed).
 	//   other: send RESET; expire session after maxResetsPerSession.
 	write := proxy.Hook(func(s *proxy.ClientSession, data []byte) ([]byte, error) {
+		var (
+			n   int
+			err error
+		)
 		if s.GetBackendConn() != nil {
 			if isControlFrame(data, frame.FlagPing) {
 				log.Info("PING received from proxy", "session", s, "len", len(data))
-				if err := sendRaw(s, data); err != nil {
+				if n, err = sendRaw(s, data); err != nil {
 					log.Error(err, "Failed to echo PING")
 				}
+				p.UpdateMetrics(func(m *proxy.SessionMetrics) {
+					m.FrontendBytesWrittenCounter.Add(int64(n))
+				})
 				return nil, nil // consume ping
 			}
 			// Raw data: forward to backend.
@@ -43,28 +50,47 @@ func buildMuxHooks(log logr.Logger, cfg *config.UdpMuxConfig) proxy.Hook {
 		// Unknown session.
 		if isControlFrame(data, frame.FlagPing) {
 			log.Info("PING received from proxy", "session", s, "len", len(data))
-			if err := sendRaw(s, data); err != nil {
+			if n, err = sendRaw(s, data); err != nil {
 				log.Error(err, "Failed to echo PING on unknown session")
 			}
+			p.UpdateMetrics(func(m *proxy.SessionMetrics) {
+				m.FrontendBytesWrittenCounter.Add(int64(n))
+			})
 			return nil, nil
 		}
 
 		if !isControlFrame(data, frame.FlagProxyHello) {
-			sendReset(log, s)
+			n = sendReset(log, s)
+			p.UpdateMetrics(func(m *proxy.SessionMetrics) {
+				m.SessionsResetCounter.Add(1)
+				m.BogusSessionsCounter.Add(1)
+				m.FrontendBytesWrittenCounter.Add(int64(n))
+			})
 			return nil, fmt.Errorf("unexpected packet on unknown session, RESET sent")
 		}
 
 		// Parse PROXY_HELLO.
 		endpointStr, err := parseHelloEndpoint(data)
 		if err != nil {
-			sendReset(log, s)
+			n = sendReset(log, s)
+			p.UpdateMetrics(func(m *proxy.SessionMetrics) {
+				m.SessionsResetCounter.Add(1)
+				m.FailedHandshakesCounter.Add(1)
+				m.FrontendBytesWrittenCounter.Add(int64(n))
+			})
 			return nil, fmt.Errorf("malformed PROXY_HELLO: %w", err)
 		}
 
 		// Check endpoint against allow-list.
 		if patterns := cfg.CompiledAllowList(); len(patterns) > 0 {
 			if !matchesAny(endpointStr, patterns) {
-				sendReset(log, s)
+				n = sendReset(log, s)
+				p.UpdateMetrics(func(m *proxy.SessionMetrics) {
+					m.SessionsResetCounter.Add(1)
+					m.FailedHandshakesCounter.Add(1)
+					m.ClientsBlockedByEndpointAllowlistCounter.Add(1)
+					m.FrontendBytesWrittenCounter.Add(int64(n))
+				})
 				return nil, fmt.Errorf("endpoint '%s' not in allow list", endpointStr)
 			}
 		}
@@ -72,19 +98,33 @@ func buildMuxHooks(log logr.Logger, cfg *config.UdpMuxConfig) proxy.Hook {
 		// Dial backend.
 		backendAddr, err := net.ResolveUDPAddr("udp", endpointStr)
 		if err != nil {
-			sendReset(log, s)
+			n = sendReset(log, s)
+			p.UpdateMetrics(func(m *proxy.SessionMetrics) {
+				m.SessionsResetCounter.Add(1)
+				m.FailedHandshakesCounter.Add(1)
+				m.FrontendBytesWrittenCounter.Add(int64(n))
+			})
 			return nil, fmt.Errorf("invalid backend endpoint '%s': %w", endpointStr, err)
 		}
 		backendConn, err := proxy.DialBackend(backendAddr)
 		if err != nil {
-			sendReset(log, s)
+			n = sendReset(log, s)
+			p.UpdateMetrics(func(m *proxy.SessionMetrics) {
+				m.SessionsResetCounter.Add(1)
+				m.FailedHandshakesCounter.Add(1)
+				m.FrontendBytesWrittenCounter.Add(int64(n))
+			})
 			return nil, fmt.Errorf("failed to dial backend '%s': %w", endpointStr, err)
 		}
 
 		s.SetBackendConn(backendConn)
 
-		if err := sendControl(s, frame.FlagMuxHello); err != nil {
+		if n, err = sendControl(s, frame.FlagMuxHello); err != nil {
 			log.Error(err, "Failed to send MUX_HELLO")
+		} else {
+			p.UpdateMetrics(func(m *proxy.SessionMetrics) {
+				m.FrontendBytesWrittenCounter.Add(int64(n))
+			})
 		}
 		log.Info("Session established", "session", s, "endpoint", endpointStr)
 
@@ -107,20 +147,20 @@ func isControlFrame(data []byte, flag uint16) bool {
 }
 
 // sendControl sends a control frame (no payload) back to the proxy.
-func sendControl(s *proxy.ClientSession, flags uint16) error {
+func sendControl(s *proxy.ClientSession, flags uint16) (int, error) {
 	h := frame.NewHeader(flags, 0)
 	b, err := frame.Encode(h)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = s.GetFrontendConn().WriteTo(b, s.GetClientAddr())
-	return err
+	n, err := s.GetFrontendConn().WriteTo(b, s.GetClientAddr())
+	return n, err
 }
 
 // sendRaw echoes the raw frame bytes back to the proxy (used for PING echo).
-func sendRaw(s *proxy.ClientSession, data []byte) error {
-	_, err := s.GetFrontendConn().WriteTo(data, s.GetClientAddr())
-	return err
+func sendRaw(s *proxy.ClientSession, data []byte) (int, error) {
+	n, err := s.GetFrontendConn().WriteTo(data, s.GetClientAddr())
+	return n, err
 }
 
 // parseHelloEndpoint extracts the endpoint string from a PROXY_HELLO frame.
@@ -138,8 +178,12 @@ func parseHelloEndpoint(data []byte) (string, error) {
 
 // sendReset sends a RESET control frame to the proxy, increments the per-session
 // reset counter, and expires the session once maxResetsPerSession is reached.
-func sendReset(log logr.Logger, s *proxy.ClientSession) {
-	if err := sendControl(s, frame.FlagReset); err != nil {
+func sendReset(log logr.Logger, s *proxy.ClientSession) int {
+	var (
+		n   int
+		err error
+	)
+	if n, err = sendControl(s, frame.FlagReset); err != nil {
 		log.Error(err, "Failed to send RESET")
 	}
 	v := s.GetTag(muxResetCountTag)
@@ -154,6 +198,7 @@ func sendReset(log logr.Logger, s *proxy.ClientSession) {
 		log.Info("Session expired after repeated RESETs", "session", s)
 		s.Expire()
 	}
+	return n
 }
 
 // matchesAny reports whether s matches any of the given compiled patterns.

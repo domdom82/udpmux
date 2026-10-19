@@ -34,7 +34,7 @@ udpmux tunnels multiple UDP flows over a single shared port using a custom binar
 **`cmd/udp-proxy`** — client-side: manages the session handshake with the mux, buffers packets during handshake, forwards raw data once established.
 
 **`cmd/udp-mux`** — server-side: handles session handshakes, dispatches raw data to the right backend. Also serves an HTTP API on `:8081`:
-- `GET /api/sessions` — current active session count
+- `GET /metrics` — Prometheus metrics endpoint
 - `GET /healthz`, `GET /readyz`
 
 ### Framing protocol (`pkg/frame/frame.go`)
@@ -77,6 +77,44 @@ Sessions expire after inactivity and are cleaned up every 10 s. The proxy defaul
 - `mux.go` — `UdpMuxConfig`: listen/api addresses, session timeout (default 10 min)
 - `validate.go` — address validation shared by both configs
 
-### Integration test environment
+### Metrics (`pkg/proxy/metrics.go`, `cmd/udp-mux/app/`)
 
-`test/openvpn/` contains certs, configs, and `start.sh`/`stop.sh` for a local OpenVPN multiplexing scenario.
+`SessionMetrics` is a struct of `atomic.Int64` fields embedded directly in `SessionManager` (no copy-on-write, no pointer indirection). It is never copied — always accessed via pointer.
+
+```go
+type SessionMetrics struct {
+    SessionsGauge                            atomic.Int64
+    ClientsGauge                             atomic.Int64
+    SessionsExpiredCounter                   atomic.Int64
+    SessionsResetCounter                     atomic.Int64
+    BogusSessionsCounter                     atomic.Int64
+    FailedHandshakesCounter                  atomic.Int64
+    ClientsBlockedBySessionLimitCounter      atomic.Int64
+    ClientsBlockedByEndpointAllowlistCounter atomic.Int64
+    FrontendBytesReadCounter                 atomic.Int64
+    FrontendBytesWrittenCounter              atomic.Int64
+    BackendBytesReadCounter                  atomic.Int64
+    BackendBytesWrittenCounter               atomic.Int64
+}
+```
+
+`SessionManager.GetMetrics()` returns `&sm.metrics`. `Proxy.GetMetrics()` delegates to it (returns `nil` if sessionMgr not yet initialised). `Proxy.UpdateMetrics(fn func(*SessionMetrics))` lets hook code (which has no direct `SessionManager` reference) update counters — used by `cmd/udp-mux/app/hooks.go` for reset/bogus/allowlist events.
+
+`pkg/proxy/` has no Prometheus dependency. All Prometheus wiring (`GaugeFunc`/`CounterFunc` reading via `.Load()`) lives in `cmd/udp-mux/app/metrics.go`.
+
+### Integration test environment (`test/e2e/`)
+
+Docker-based end-to-end tests that spin up isolated bridge networks, apply MTU/bandwidth shaping, and run OpenVPN + iperf3 to verify throughput. Requires `docker` with `ip` / `tc` inside containers. Run each scenario by executing its `run.sh`; the script exits non-zero on failure and collects logs under `test/e2e/<scenario>/logs/`.
+
+Shared infrastructure lives in `test/e2e/common/`:
+- `lib.sh` — helpers for network creation, MTU shaping, BW shaping, log collection
+- `Dockerfile.vpn-node` — Docker image used for all VPN/proxy nodes
+- `pki/` — pre-generated certs and keys for OpenVPN
+
+Scenarios:
+
+| Directory | Topology | Pass criterion |
+|---|---|---|
+| `vpn-single-client/` | 3-network chain (client → proxy → mux → VPN server); single iperf3 flow | ≥ 400 Mbit/s |
+| `vpn-double-client/` | Same chain + second direct client; two VPN hops running concurrently | ≥ 300 Mbit/s per flow |
+| `vpn-double-server/` | Two clients + two VPN servers multiplexed through one mux port | ≥ 200 Mbit/s per flow |

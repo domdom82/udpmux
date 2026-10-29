@@ -149,7 +149,10 @@ func isControlFrame(data []byte, flag uint16) bool {
 
 // sendControl sends a control frame (no payload) back to the proxy.
 func sendControl(s *proxy.ClientSession, flags uint16) (int, error) {
-	h := frame.NewHeader(flags, 0)
+	h, err := frame.NewHeader(flags, 0)
+	if err != nil {
+		return 0, err
+	}
 	b, err := frame.Encode(h)
 	if err != nil {
 		return 0, err

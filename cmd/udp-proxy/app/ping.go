@@ -37,7 +37,10 @@ func runPing(ctx context.Context, log logr.Logger, cfg *config.UdpProxyConfig) e
 			payload[i] = 'A'
 		}
 	}
-	h := frame.NewHeader(frame.FlagPing, len(payload))
+	h, err := frame.NewHeader(frame.FlagPing, len(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create ping header: %w", err)
+	}
 	headerBytes, err := frame.Encode(h)
 	if err != nil {
 		return fmt.Errorf("failed to encode ping frame: %w", err)

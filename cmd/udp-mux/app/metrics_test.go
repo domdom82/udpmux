@@ -106,7 +106,8 @@ var _ = Describe("metrics counters", func() {
 		defer c.Close()
 
 		// Build a PROXY_HELLO with truncated payload (length byte claims 10 bytes but payload is empty).
-		h := frame.NewHeader(frame.FlagProxyHello, 1)
+		h, err := frame.NewHeader(frame.FlagProxyHello, 1)
+		Expect(err).NotTo(HaveOccurred())
 		hdr, err := frame.Encode(h)
 		Expect(err).NotTo(HaveOccurred())
 		malformed := append(hdr, byte(10)) // claims 10-byte endpoint, payload missing

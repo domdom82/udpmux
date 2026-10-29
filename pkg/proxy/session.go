@@ -198,7 +198,7 @@ func (sm *SessionManager) remove(key string) {
 	sm.log.Info("Session expired", "session", session)
 	close(session.done)
 	if conn := session.GetBackendConn(); conn != nil {
-		conn.Close()
+		_ = conn.Close()
 	}
 	delete(sm.sessions, key)
 

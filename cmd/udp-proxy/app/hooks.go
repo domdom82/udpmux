@@ -95,8 +95,11 @@ func (ps *proxySession) sendProxyHello(s *proxy.ClientSession) error {
 	if len(ep) > 255 {
 		return fmt.Errorf("endpoint address too long: %s", ps.endpointAddr)
 	}
-	payload := append([]byte{byte(len(ep))}, ep...)
-	h := frame.NewHeader(frame.FlagProxyHello, len(payload))
+	payload := append([]byte{byte(len(ep))}, ep...) // #nosec: G115 -- length is validated above
+	h, err := frame.NewHeader(frame.FlagProxyHello, len(payload))
+	if err != nil {
+		return err
+	}
 	headerBytes, err := frame.Encode(h)
 	if err != nil {
 		return err

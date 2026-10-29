@@ -139,7 +139,7 @@ func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
 	go func() {
 		<-ctx.Done()
 		log.Info("Shutting down proxy...")
-		frontendConn.Close()
+		_ = frontendConn.Close()
 	}()
 
 	// Main multi-packet read loop (recvmmsg via ReadBatch)
@@ -195,7 +195,7 @@ func (p *Proxy) getWorkerIndex(key string) int {
 		return idx
 	}
 	h := fnv.New32a()
-	h.Write([]byte(key))
+	_, _ = h.Write([]byte(key))
 	idx := int(h.Sum32()) % p.workers
 	p.addrToWorker[key] = idx
 	return idx

@@ -150,5 +150,11 @@ var _ = Describe("UdpProxyConfig", func() {
 			cfg.PingSize = 100
 			Expect(cfg.Validate()).To(Succeed())
 		})
+
+		It("fails with too large ping size", func() {
+			cfg.Ping = true
+			cfg.PingSize = 10000
+			Expect(cfg.Validate()).To(HaveOccurred())
+		})
 	})
 })

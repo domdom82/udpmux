@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof" // #nosec: G108 -- default http mux is only used when profiling is enabled
+	"time"
 
 	"github.com/go-logr/logr"
 
@@ -26,8 +27,9 @@ func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfi
 	}
 
 	httpServer := &http.Server{
-		Addr:    cfg.ApiListenAddr,
-		Handler: mux,
+		Addr:              cfg.ApiListenAddr,
+		ReadHeaderTimeout: 10 * time.Second,
+		Handler:           mux,
 		BaseContext: func(listener net.Listener) context.Context {
 			return ctx
 		},
@@ -36,7 +38,7 @@ func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfi
 	go func() {
 		<-ctx.Done()
 		log.Info("Shutting down HTTP server...")
-		_ = httpServer.Shutdown(context.Background())
+		_ = httpServer.Close()
 	}()
 
 	return httpServer.ListenAndServe()

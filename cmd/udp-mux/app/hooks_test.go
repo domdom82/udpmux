@@ -37,7 +37,8 @@ func readWithTimeout(conn *net.UDPConn, timeout time.Duration) ([]byte, *net.UDP
 func buildProxyHello(endpoint string) []byte {
 	ep := []byte(endpoint)
 	payload := append([]byte{byte(len(ep))}, ep...)
-	h := frame.NewHeader(frame.FlagProxyHello, len(payload))
+	h, err := frame.NewHeader(frame.FlagProxyHello, len(payload))
+	Expect(err).NotTo(HaveOccurred())
 	hdr, err := frame.Encode(h)
 	Expect(err).NotTo(HaveOccurred())
 	return append(hdr, payload...)

@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+const (
+	pingSizeLimit = 9000
+)
+
 type UdpProxyConfig struct {
 	ListenAddr           string        // The ip:port the udp proxy will listen on.
 	MuxAddr              string        // The ip:port the udp proxy will forward to.
@@ -45,6 +49,10 @@ func (cfg *UdpProxyConfig) Validate() error {
 
 	if cfg.Ping && cfg.PingSize < 0 {
 		return fmt.Errorf("pingSize must be non-negative")
+	}
+
+	if cfg.Ping && cfg.PingSize > pingSizeLimit {
+		return fmt.Errorf("pingSize must be less than or equal to %d", pingSizeLimit)
 	}
 
 	return nil

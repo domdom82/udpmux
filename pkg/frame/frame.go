@@ -3,6 +3,7 @@ package frame
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -26,12 +27,15 @@ type Header struct {
 	Length uint16 // Payload length (0 for most control frames; endpoint string length for PROXY_HELLO).
 }
 
-func NewHeader(flags uint16, payloadLen int) *Header {
+func NewHeader(flags uint16, payloadLen int) (*Header, error) {
+	if payloadLen < 0 || payloadLen > math.MaxUint16 {
+		return nil, fmt.Errorf("invalid payload length: %d", payloadLen)
+	}
 	return &Header{
 		Magic:  Magic,
 		Flags:  flags,
 		Length: uint16(payloadLen),
-	}
+	}, nil
 }
 
 func Encode(h *Header) ([]byte, error) {

@@ -27,25 +27,17 @@ func bindUDP() (*net.UDPConn, *net.UDPAddr) {
 	return conn, conn.LocalAddr().(*net.UDPAddr)
 }
 
-func readWithTimeout(conn *net.UDPConn, timeout time.Duration) ([]byte, bool) {
-	buf := make([]byte, 65536)
-	Expect(conn.SetReadDeadline(time.Now().Add(timeout))).To(Succeed())
-	n, err := conn.Read(buf)
-	if err != nil {
-		return nil, false
-	}
-	return buf[:n], true
-}
-
 func buildResetFrame() []byte {
-	h := frame.NewHeader(frame.FlagReset, 0)
+	h, err := frame.NewHeader(frame.FlagReset, 0)
+	Expect(err).NotTo(HaveOccurred())
 	b, err := frame.Encode(h)
 	Expect(err).NotTo(HaveOccurred())
 	return b
 }
 
 func buildMuxHelloFrame() []byte {
-	h := frame.NewHeader(frame.FlagMuxHello, 0)
+	h, err := frame.NewHeader(frame.FlagMuxHello, 0)
+	Expect(err).NotTo(HaveOccurred())
 	b, err := frame.Encode(h)
 	Expect(err).NotTo(HaveOccurred())
 	return b

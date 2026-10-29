@@ -1,0 +1,107 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        required: true
+        type: string
+        default: snapshot
+        description: |
+          the mode to use. either `snapshot` or `release`. Will affect effective version, as well
+          as target-oci-registry.
+
+jobs:
+  prepare:
+    uses: gardener/cc-utils/.github/workflows/prepare.yaml@v1
+    with:
+      mode: ${{ inputs.mode }}
+    permissions:
+      id-token: write
+
+  oci-images:
+    name: Build OCI-Images
+    needs:
+      - prepare
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    secrets: inherit
+    uses: gardener/cc-utils/.github/workflows/oci-ocm.yaml@v1
+    strategy:
+      matrix:
+        args:
+          - name: udp-mux
+            target: udp-mux
+            oci-repository: gardener/udpmux
+            ocm-labels:
+              name: gardener.cloud/cve-categorisation
+              value:
+                network_exposure: public
+                authentication_enforced: false
+                user_interaction: end-user
+                confidentiality_requirement: low
+                integrity_requirement: high
+                availability_requirement: high
+          - name: udp-proxy
+            target: udp-proxy
+            oci-repository: gardener/udpmux
+            ocm-labels:
+              name: gardener.cloud/cve-categorisation
+              value:
+                network_exposure: private
+                authentication_enforced: false
+                user_interaction: end-user
+                confidentiality_requirement: low
+                integrity_requirement: high
+                availability_requirement: high
+    with:
+      name: ${{ matrix.args.name }}
+      version: ${{ needs.prepare.outputs.version }}
+      target: ${{ matrix.args.target }}
+      oci-registry: ${{ needs.prepare.outputs.oci-registry }}
+      oci-repository: ${{ matrix.args.oci-repository }}
+      oci-platforms: linux/amd64,linux/arm64
+      ocm-labels: ${{ toJSON(matrix.args.ocm-labels) }}
+      extra-tags:
+
+  sast-lint:
+    uses: gardener/cc-utils/.github/workflows/sastlint-ocm.yaml@v1
+    permissions:
+      contents: read
+    with:
+      linter: gosec
+      run: .ci/check
+
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: gardener/cc-utils/.github/actions/trusted-checkout@v1
+      - name: run-test
+        run: |
+          set -euo pipefail
+
+          mkdir /tmp/blobs.d
+          git config --global user.email "gardener@sap.com"
+          git config --global user.name "Gardener CI/CD"
+          make check-generate format test test-e2e |& tee /tmp/blobs.d/verify-log.txt
+
+          tar czf /tmp/blobs.d/verify-log.tar.gz -C /tmp/blobs.d verify-log.txt
+
+      - name: add-test-result-to-component-descriptor
+        uses: gardener/cc-utils/.github/actions/export-ocm-fragments@v1
+        with:
+          blobs-directory: /tmp/blobs.d
+          ocm-resources: |
+            - name: test-results
+              relation: local
+              access:
+                type: localBlob
+                localReference: verify-log.tar.gz
+              labels:
+                - name: gardener.cloud/purposes
+                  value:
+                    - test

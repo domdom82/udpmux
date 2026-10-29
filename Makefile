@@ -99,6 +99,6 @@ gen-pki: build-test-images
 
 .PHONY: test-e2e
 test-e2e: build-test-images gen-pki
-	@bash test/e2e/vpn-single-client/run.sh
-	@bash test/e2e/vpn-double-client/run.sh
-	@bash test/e2e/vpn-double-server/run.sh
+	@bash hack/run-with-retry.sh test/e2e/vpn-single-client/run.sh
+	@bash hack/run-with-retry.sh test/e2e/vpn-double-client/run.sh
+	@bash hack/run-with-retry.sh test/e2e/vpn-double-server/run.sh

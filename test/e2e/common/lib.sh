@@ -94,7 +94,7 @@ shape_bw() {
   local iface=$2
   local rate="${3:-${BW:-1gbit}}"
   docker exec "$ctr" tc qdisc replace dev "$iface" root tbf \
-    rate "$rate" burst 32kbit latency 400ms
+    rate "$rate" burst 1mbit latency 400ms
 }
 
 # ---------------------------------------------------------------------------

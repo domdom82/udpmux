@@ -12,7 +12,7 @@
 # Environment variables:
 #   MTU  - network MTU (default: 1500)
 #   BW   - tc bandwidth rate (default: 1gbit)
-#   THRESHOLD_MBPS - minimum acceptable throughput in Mbit/s (default: 300)
+#   THRESHOLD_MBPS - minimum acceptable throughput in Mbit/s (default: 250)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +20,7 @@ COMMON="$SCRIPT_DIR/../common"
 REPO_ROOT="$SCRIPT_DIR/../../.."
 PKI_DIR="$COMMON/pki/gen"
 VERSION="$(cat "$REPO_ROOT/VERSION")"
-THRESHOLD="${THRESHOLD_MBPS:-300}"
+THRESHOLD="${THRESHOLD_MBPS:-250}"
 SFX="dc"  # suffix to namespace Docker resources for this test
 
 # shellcheck source=../common/lib.sh

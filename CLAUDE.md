@@ -1,0 +1,120 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Commands
+
+```bash
+make build          # build both binaries to bin/
+make build-udp-proxy
+make build-udp-mux
+make check          # go fmt + go vet
+make tidy           # go mod tidy
+make clean
+
+make test           # benchmarks + race-detector tests (always use this, not go test)
+go test ./pkg/frame/... -run TestFrame  # single package/test during development
+```
+
+Docker images (requires `docker buildx`):
+```bash
+make docker-images
+```
+
+## Architecture
+
+udpmux tunnels multiple UDP flows over a single shared port using a custom binary framing protocol. The canonical use case is multiplexing several VPN tunnels through one public port.
+
+```
+[Client] --plain UDP--> [udp-proxy :7070] --framed UDP--> [udp-mux :8080] --plain UDP--> [backend :1194]
+```
+
+### Two binaries
+
+**`cmd/udp-proxy`** — client-side: manages the session handshake with the mux, buffers packets during handshake, forwards raw data once established.
+
+**`cmd/udp-mux`** — server-side: handles session handshakes, dispatches raw data to the right backend. Also serves an HTTP API on `:8081`:
+- `GET /metrics` — Prometheus metrics endpoint
+- `GET /healthz`, `GET /readyz`
+
+### Framing protocol (`pkg/frame/frame.go`)
+
+Magic bytes: `0x5544504D` ("UDPM"). 8-byte control frame header: `[Magic 4B][Flags 2B][Length 2B]`.
+
+Steady-state data is forwarded **raw with zero overhead** — no header on data packets. Control frames are only used for session lifecycle.
+
+Flag constants:
+- `FlagProxyHello` — proxy initiates handshake; payload carries the backend endpoint string
+- `FlagMuxHello` — mux acknowledges handshake; no payload
+- `FlagReset` — mux requests re-handshake (unknown session); no payload
+- `FlagPing` — proxy pings the mux directly to check connectivity; mux echoes it back
+
+### Session state machine (proxy side, `cmd/udp-proxy/app/hooks.go`)
+
+```
+IDLE → HANDSHAKING → ESTABLISHED
+```
+
+- **IDLE**: first packet triggers PROXY_HELLO retries (up to 5, 500 ms apart); packets are buffered (up to 100)
+- **HANDSHAKING**: further packets are buffered
+- **ESTABLISHED**: raw data forwarded directly; buffered packets flushed on MUX_HELLO receipt
+
+The mux side (`cmd/udp-mux/app/hooks.go`) disambiguates by backend conn: known session → raw data path; no conn → expect PROXY_HELLO.
+
+### Session expiry (`pkg/proxy/session.go`)
+
+Sessions expire after inactivity and are cleaned up every 10 s. The proxy default timeout (5 min) is intentionally shorter than the mux default (10 min) so the proxy always expires first — ensuring re-handshakes are always initiated cleanly rather than colliding with a stale mux session.
+
+### Core proxy engine (`pkg/proxy/`)
+
+- `proxy.go` — `Proxy` struct: uses `ipv4.ReadBatch` (recvmmsg, batch size 32). Hashes client addresses to fixed worker goroutines to preserve per-client packet ordering.
+- `session.go` — `ClientSession` / `SessionManager`: one session per unique client address, each with a write-to-backend and read-from-backend goroutine. Sessions expire after configurable inactivity (cleanup every 10 s). Socket buffers are maximised to 16 MB.
+- `hook.go` — `Hook` type (`func(*ClientSession, []byte) ([]byte, error)`): framing logic is injected as read/write hooks, keeping the proxy engine protocol-agnostic. Returning `nil, nil` suppresses forwarding without error.
+
+### Config (`pkg/config/`)
+
+- `proxy.go` — `UdpProxyConfig`: listen/mux/endpoint addresses, session timeout (default 5 min), optional ping
+- `mux.go` — `UdpMuxConfig`: listen/api addresses, session timeout (default 10 min)
+- `validate.go` — address validation shared by both configs
+
+### Metrics (`pkg/proxy/metrics.go`, `cmd/udp-mux/app/`)
+
+`SessionMetrics` is a struct of `atomic.Int64` fields embedded directly in `SessionManager` (no copy-on-write, no pointer indirection). It is never copied — always accessed via pointer.
+
+```go
+type SessionMetrics struct {
+    SessionsGauge                            atomic.Int64
+    ClientsGauge                             atomic.Int64
+    SessionsExpiredCounter                   atomic.Int64
+    SessionsResetCounter                     atomic.Int64
+    BogusSessionsCounter                     atomic.Int64
+    FailedHandshakesCounter                  atomic.Int64
+    ClientsBlockedBySessionLimitCounter      atomic.Int64
+    ClientsBlockedByEndpointAllowlistCounter atomic.Int64
+    FrontendBytesReadCounter                 atomic.Int64
+    FrontendBytesWrittenCounter              atomic.Int64
+    BackendBytesReadCounter                  atomic.Int64
+    BackendBytesWrittenCounter               atomic.Int64
+}
+```
+
+`SessionManager.GetMetrics()` returns `&sm.metrics`. `Proxy.GetMetrics()` delegates to it (returns `nil` if sessionMgr not yet initialised). `Proxy.UpdateMetrics(fn func(*SessionMetrics))` lets hook code (which has no direct `SessionManager` reference) update counters — used by `cmd/udp-mux/app/hooks.go` for reset/bogus/allowlist events.
+
+`pkg/proxy/` has no Prometheus dependency. All Prometheus wiring (`GaugeFunc`/`CounterFunc` reading via `.Load()`) lives in `cmd/udp-mux/app/metrics.go`.
+
+### Integration test environment (`test/e2e/`)
+
+Docker-based end-to-end tests that spin up isolated bridge networks, apply MTU/bandwidth shaping, and run OpenVPN + iperf3 to verify throughput. Requires `docker` with `ip` / `tc` inside containers. Run each scenario by executing its `run.sh`; the script exits non-zero on failure and collects logs under `test/e2e/<scenario>/logs/`.
+
+Shared infrastructure lives in `test/e2e/common/`:
+- `lib.sh` — helpers for network creation, MTU shaping, BW shaping, log collection
+- `Dockerfile.vpn-node` — Docker image used for all VPN/proxy nodes
+- `pki/` — pre-generated certs and keys for OpenVPN
+
+Scenarios:
+
+| Directory | Topology | Pass criterion |
+|---|---|---|
+| `vpn-single-client/` | 3-network chain (client → proxy → mux → VPN server); single iperf3 flow | ≥ 400 Mbit/s |
+| `vpn-double-client/` | Same chain + second direct client; two VPN hops running concurrently | ≥ 300 Mbit/s per flow |
+| `vpn-double-server/` | Two clients + two VPN servers multiplexed through one mux port | ≥ 200 Mbit/s per flow |

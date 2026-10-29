@@ -4,10 +4,11 @@ import (
 	"math"
 	"net/http"
 
-	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/domdom82/udpmux/pkg/proxy"
 )
 
 func addMetrics(log logr.Logger, p *proxy.Proxy, mux *http.ServeMux) *prometheus.Registry {

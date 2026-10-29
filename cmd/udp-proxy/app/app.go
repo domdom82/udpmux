@@ -5,12 +5,13 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/domdom82/udpmux/pkg/config"
-	"github.com/domdom82/udpmux/pkg/utils"
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/component-base/version/verflag"
+
+	"github.com/domdom82/udpmux/pkg/config"
+	"github.com/domdom82/udpmux/pkg/utils"
 )
 
 const Name = "udp-proxy"

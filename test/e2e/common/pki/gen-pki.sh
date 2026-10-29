@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Idempotently generates all PKI material needed by the e2e tests.
 # Output goes to gen/ (next to this script) which is git-ignored.
+# Requires only docker (uses local/vpn-node:latest for openssl + openvpn).
 # Run from any directory.
 set -euo pipefail
 
@@ -27,45 +28,27 @@ fi
 
 echo "Generating PKI material in $OUT ..."
 
-# ---------------------------------------------------------------------------
-# CA
-# ---------------------------------------------------------------------------
-openssl genrsa -out "$OUT/ca.key" 4096
-openssl req -new -x509 -days 3650 -key "$OUT/ca.key" \
-  -out "$OUT/ca.crt" \
-  -subj "/CN=udpmux-e2e-ca"
+docker run --rm -v "$OUT:/pki" local/vpn-node:latest bash -euo pipefail -c '
+  sign_cert() {
+    local name=$1 cn=$2
+    openssl genrsa -out "/pki/${name}.key" 2048
+    openssl req -new -key "/pki/${name}.key" -out "/pki/${name}.csr" -subj "/CN=${cn}"
+    openssl x509 -req -days 3650 \
+      -in "/pki/${name}.csr" -CA /pki/ca.crt -CAkey /pki/ca.key \
+      -CAcreateserial -out "/pki/${name}.crt"
+    rm -f "/pki/${name}.csr"
+  }
 
-sign_cert() {
-  local name=$1 cn=$2
-  openssl genrsa -out "$OUT/${name}.key" 2048
-  openssl req -new -key "$OUT/${name}.key" \
-    -out "$OUT/${name}.csr" \
-    -subj "/CN=${cn}"
-  openssl x509 -req -days 3650 \
-    -in  "$OUT/${name}.csr" \
-    -CA  "$OUT/ca.crt" \
-    -CAkey "$OUT/ca.key" \
-    -CAcreateserial \
-    -out "$OUT/${name}.crt"
-  rm -f "$OUT/${name}.csr"
-}
+  openssl genrsa -out /pki/ca.key 4096
+  openssl req -new -x509 -days 3650 -key /pki/ca.key -out /pki/ca.crt -subj "/CN=udpmux-e2e-ca"
 
-# ---------------------------------------------------------------------------
-# Server and client certs
-# ---------------------------------------------------------------------------
-sign_cert server   "udpmux-e2e-server"
-sign_cert server2  "udpmux-e2e-server2"
-sign_cert client1  "udpmux-e2e-client1"
-sign_cert client2  "udpmux-e2e-client2"
+  sign_cert server  "udpmux-e2e-server"
+  sign_cert server2 "udpmux-e2e-server2"
+  sign_cert client1 "udpmux-e2e-client1"
+  sign_cert client2 "udpmux-e2e-client2"
 
-# ---------------------------------------------------------------------------
-# DH parameters (2048-bit)
-# ---------------------------------------------------------------------------
-openssl dhparam -out "$OUT/dh.pem" 2048
-
-# ---------------------------------------------------------------------------
-# TLS auth key
-# ---------------------------------------------------------------------------
-openvpn --genkey tls-auth "$OUT/ta.key"
+  openssl dhparam -out /pki/dh.pem 2048
+  openvpn --genkey tls-auth /pki/ta.key
+'
 
 echo "PKI generation complete."

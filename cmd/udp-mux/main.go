@@ -8,8 +8,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/domdom82/udpmux/cmd/udp-mux/app"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
+
+	"github.com/domdom82/udpmux/cmd/udp-mux/app"
 )
 
 func main() {

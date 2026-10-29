@@ -4,12 +4,15 @@ import (
 	"context"
 	"net"
 	"net/http"
-	_ "net/http/pprof" // registers /debug/pprof/* handlers on http.DefaultServeMux
+	_ "net/http/pprof" // #nosec: G108 -- default http mux is only used when profiling is enabled
+
+	"github.com/go-logr/logr"
 
 	"github.com/domdom82/udpmux/pkg/config"
 	"github.com/domdom82/udpmux/pkg/proxy"
-	"github.com/go-logr/logr"
 )
+
+var pprofEnabled bool
 
 func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfig, p *proxy.Proxy) error {
 	mux := http.NewServeMux()
@@ -18,7 +21,9 @@ func runHTTPServer(ctx context.Context, log logr.Logger, cfg *config.UdpMuxConfi
 	_ = addMetrics(log, p, mux)
 
 	// pprof: forward /debug/pprof/* to the default mux where the import above registered them.
-	mux.Handle("/debug/pprof/", http.DefaultServeMux)
+	if pprofEnabled {
+		mux.Handle("/debug/pprof/", http.DefaultServeMux)
+	}
 
 	httpServer := &http.Server{
 		Addr:    cfg.ApiListenAddr,

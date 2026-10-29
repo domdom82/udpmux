@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/domdom82/udpmux/cmd/udp-proxy/app"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
+
+	"github.com/domdom82/udpmux/cmd/udp-proxy/app"
 )
 
 func main() {

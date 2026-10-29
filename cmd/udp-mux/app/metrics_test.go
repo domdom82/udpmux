@@ -6,12 +6,13 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"github.com/domdom82/udpmux/pkg/config"
-	"github.com/domdom82/udpmux/pkg/frame"
-	"github.com/domdom82/udpmux/pkg/proxy"
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/domdom82/udpmux/pkg/config"
+	"github.com/domdom82/udpmux/pkg/frame"
+	"github.com/domdom82/udpmux/pkg/proxy"
 )
 
 // startMuxProxyWithCfg is like startMuxProxy but accepts a fully-formed config.

@@ -1,0 +1,218 @@
+package proxy
+
+import (
+	"context"
+	"fmt"
+	"hash/fnv"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/go-logr/logr"
+	"golang.org/x/net/ipv4"
+)
+
+const (
+	packetBatchSize    = 32           // this many packets can be read at once from socket buffer
+	packetBufferSize   = 2 << 15      // 64k max udp length
+	socketBufferSize   = 16 * 2 << 19 // 16M max default socket buffers. limited by net.core.wmem / rmem
+	workerChanCapacity = 1000         // this many packets can be stored in a worker packet channel
+)
+
+type Packet struct {
+	Addr    net.Addr
+	AddrKey string // computed only once in the read loop, shared in worker and session manager for performance
+	Data    []byte
+}
+
+type Proxy struct {
+	localAddr            string
+	backendAddr          string
+	resolvedAddr         atomic.Value // stores string; set once after ListenAndServe binds
+	workers              int
+	sessionTimeout       time.Duration
+	cleanupInterval      time.Duration
+	maxSessionsPerClient int
+	addrToWorker         map[string]int
+	writeHooks           []Hook
+	readHooks            []Hook
+	sessionMgr           *SessionManager
+	mu                   sync.RWMutex
+}
+
+func NewProxy(localAddr string, backendAddr string, workers int, sessionTimeout, cleanupInterval time.Duration, maxSessionsPerClient int) *Proxy {
+	p := &Proxy{
+		localAddr:            localAddr,
+		backendAddr:          backendAddr,
+		workers:              workers,
+		sessionTimeout:       sessionTimeout,
+		cleanupInterval:      cleanupInterval,
+		maxSessionsPerClient: maxSessionsPerClient,
+		addrToWorker:         make(map[string]int),
+	}
+
+	return p
+}
+
+func (p *Proxy) AddWriteHook(hook Hook) {
+	p.writeHooks = append(p.writeHooks, hook)
+}
+
+func (p *Proxy) AddReadHook(hook Hook) {
+	p.readHooks = append(p.readHooks, hook)
+}
+
+func (p *Proxy) GetMetrics() *SessionMetrics {
+	if p == nil {
+		return nil
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.sessionMgr == nil {
+		return nil
+	}
+	return p.sessionMgr.GetMetrics()
+}
+
+func (p *Proxy) UpdateMetrics(fn func(*SessionMetrics)) {
+	if p == nil {
+		return
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.sessionMgr == nil {
+		return
+	}
+	fn(p.sessionMgr.GetMetrics())
+}
+
+func (p *Proxy) ListenAndServe(ctx context.Context, log logr.Logger) error {
+	// Resolve frontend endpoint address
+	listenAddr, err := net.ResolveUDPAddr("udp", p.localAddr)
+	if err != nil {
+		return fmt.Errorf("invalid local endpoint '%s' (%w)", p.localAddr, err)
+	}
+
+	// Bind frontend UDP socket
+	frontendConn, err := net.ListenUDP("udp", listenAddr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on UDP address '%s' (%w)", p.localAddr, err)
+	}
+	defer frontendConn.Close()
+	p.resolvedAddr.Store(frontendConn.LocalAddr().String())
+
+	// Resolve backend endpoint address if provided
+	var backendAddr *net.UDPAddr
+	if p.backendAddr != "" {
+		backendAddr, err = net.ResolveUDPAddr("udp", p.backendAddr)
+		if err != nil {
+			return fmt.Errorf("invalid backend endpoint '%s' (%w)", p.backendAddr, err)
+		}
+	}
+
+	// Maximize frontend receive/write buffers (limited by sysctl net.core.wmem_max / net.core.rmem_max)
+	if err = frontendConn.SetReadBuffer(socketBufferSize); err != nil {
+		log.Error(err, "failed to set socket read buffer size")
+	}
+	if err = frontendConn.SetWriteBuffer(socketBufferSize); err != nil {
+		log.Error(err, "failed to set socket write buffer size")
+	}
+
+	// Create one channel per worker. Packets from the same client always go to the same worker (address-hashed)
+	workerChans := make([]chan Packet, p.workers)
+	for i := range p.workers {
+		workerChans[i] = make(chan Packet, workerChanCapacity)
+	}
+	sessionMgr := newSessionManager(log, backendAddr, frontendConn, p.writeHooks, p.readHooks, p.sessionTimeout, p.cleanupInterval, p.maxSessionsPerClient)
+	p.mu.Lock()
+	p.sessionMgr = sessionMgr
+	p.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for i := 0; i < p.workers; i++ {
+		wg.Add(1)
+		go worker(log, workerChans[i], sessionMgr, &wg)
+	}
+
+	// Handle OS signals for graceful shutdown
+	go func() {
+		<-ctx.Done()
+		log.Info("Shutting down proxy...")
+		_ = frontendConn.Close()
+	}()
+
+	// Main multi-packet read loop (recvmmsg via ReadBatch)
+	packetConn := ipv4.NewPacketConn(frontendConn)
+	defer packetConn.Close()
+	ms := make([]ipv4.Message, packetBatchSize)
+	for i := range packetBatchSize {
+		buf := make([]byte, packetBufferSize)
+		ms[i] = ipv4.Message{Buffers: [][]byte{buf}}
+	}
+
+	log.Info("UDP Proxy running", "frontend", p.localAddr, "backend", p.backendAddr, "workers", p.workers)
+
+	for {
+		// Read a batch of packets and push them into the packet channel
+		n, err := packetConn.ReadBatch(ms, 0)
+		if err != nil {
+			break // Listener closed, context canceled etc.
+		}
+
+		for i := range n {
+			msgLen := ms[i].N
+			if msgLen == 0 {
+				continue
+			}
+
+			// Copy frame payload to decouple from receiver batch buffers
+			data := make([]byte, msgLen)
+			copy(data, ms[i].Buffers[0][:msgLen])
+
+			// Map client address to a fixed worker to preserve per-client packet order.
+			key := ms[i].Addr.String()
+			idx := p.getWorkerIndex(key)
+			select {
+			case workerChans[idx] <- Packet{Addr: ms[i].Addr, AddrKey: key, Data: data}:
+			default:
+				log.Info("worker queue full, dropping packet", "addr", ms[i].Addr)
+			}
+		}
+	}
+
+	for _, ch := range workerChans {
+		close(ch)
+	}
+	wg.Wait()
+	log.Info("Proxy stopped.")
+	return nil
+}
+
+// Map client address to a worker
+func (p *Proxy) getWorkerIndex(key string) int {
+	if idx, ok := p.addrToWorker[key]; ok {
+		return idx
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	idx := int(h.Sum32()) % p.workers
+	p.addrToWorker[key] = idx
+	return idx
+}
+
+// Worker dispatch logic: Routes packet from client channel to session forwarder
+func worker(log logr.Logger, ch <-chan Packet, sm *SessionManager, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for pkt := range ch {
+		session := sm.getOrCreate(pkt.AddrKey, pkt.Addr)
+		if session != nil {
+			select {
+			case session.sendChan <- pkt.Data:
+			default:
+				log.Info("Session queue full, dropping packet", "addr", pkt.AddrKey)
+			}
+		}
+	}
+}

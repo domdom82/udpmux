@@ -1,0 +1,14 @@
+client
+tls-client
+pull
+proto udp4
+remote 172.22.0.40 1194
+dev tun0
+tun-mtu ${TUN_MTU}
+ca /pki/ca.crt
+cert /pki/client2.crt
+key /pki/client2.key
+tls-auth /pki/ta.key 1
+cipher AES-256-GCM
+keepalive 10 60
+verb 3

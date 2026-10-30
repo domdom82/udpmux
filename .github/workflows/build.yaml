@@ -34,7 +34,7 @@ jobs:
         args:
           - name: udp-mux
             target: udp-mux
-            oci-repository: gardener/udpmux
+            oci-repository: gardener/udp-mux
             ocm-labels:
               name: gardener.cloud/cve-categorisation
               value:
@@ -46,7 +46,7 @@ jobs:
                 availability_requirement: high
           - name: udp-proxy
             target: udp-proxy
-            oci-repository: gardener/udpmux
+            oci-repository: gardener/udp-proxy
             ocm-labels:
               name: gardener.cloud/cve-categorisation
               value:

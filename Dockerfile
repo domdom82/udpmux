@@ -1,5 +1,5 @@
 ## base
-FROM alpine:3.24.1 AS base
+FROM alpine:3.24.3 AS base
 
 RUN apk add --update iproute2-minimal \
     && \

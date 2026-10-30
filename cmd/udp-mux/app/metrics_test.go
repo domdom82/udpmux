@@ -81,7 +81,9 @@ var _ = Describe("metrics counters", func() {
 		c.SetReadDeadline(time.Now().Add(time.Second))
 		c.ReadFromUDP(buf)
 
-		Expect(p.GetMetrics().SessionsResetCounter.Load()).To(Equal(int64(1)))
+		Eventually(func() int64 { return p.GetMetrics().SessionsResetCounter.Load() },
+			200*time.Millisecond, 5*time.Millisecond,
+		).Should(Equal(int64(1)))
 		Expect(p.GetMetrics().BogusSessionsCounter.Load()).To(Equal(int64(1)))
 	})
 
@@ -118,7 +120,9 @@ var _ = Describe("metrics counters", func() {
 		c.SetReadDeadline(time.Now().Add(time.Second))
 		c.ReadFromUDP(buf)
 
-		Expect(p.GetMetrics().FailedHandshakesCounter.Load()).To(Equal(int64(1)))
+		Eventually(func() int64 { return p.GetMetrics().FailedHandshakesCounter.Load() },
+			200*time.Millisecond, 5*time.Millisecond,
+		).Should(Equal(int64(1)))
 	})
 
 	It("increments ClientsBlockedBySessionLimitCounter when per-client limit is reached", func() {
@@ -166,7 +170,9 @@ var _ = Describe("metrics counters", func() {
 		c.SetReadDeadline(time.Now().Add(time.Second))
 		c.ReadFromUDP(buf)
 
-		Expect(p2.GetMetrics().ClientsBlockedByEndpointAllowlistCounter.Load()).To(Equal(int64(1)))
+		Eventually(func() int64 { return p2.GetMetrics().ClientsBlockedByEndpointAllowlistCounter.Load() },
+			200*time.Millisecond, 5*time.Millisecond,
+		).Should(Equal(int64(1)))
 	})
 
 	It("counts bytes exactly once per direction for a single packet", func() {

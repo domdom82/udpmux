@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Runs a script up to MAX_TRIES times; succeeds on the first passing attempt.
 # Usage: run-with-retry.sh <script> [args...]
-# Env:   MAX_TRIES (default: 3)
+# Env:   MAX_TRIES (default: 10)
 set -euo pipefail
 
-MAX_TRIES="${MAX_TRIES:-3}"
+MAX_TRIES="${MAX_TRIES:-10}"
 SCRIPT="$1"
 shift
 
